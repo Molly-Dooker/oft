@@ -70,6 +70,19 @@ def heatmap_loss(heatmap, gt_heatmap, weights=[100], thresh=0.05):
     loss *= positives * weights + (1 - positives)
     return loss.sum()
 
+def heatmap_focal_loss(heatmap, gt, alpha=2.0, beta=4.0, eps=1e-4):
+    # 1) heatmap을 clamp
+    p = heatmap.clamp(min=eps, max=1 - eps)
+    
+    pos_mask = (gt == 1).float()
+    neg_mask = (gt < 1).float()
+
+    # 2) loss 계산
+    pos_loss = - (1 - p)**alpha * pos_mask * torch.log(p)
+    neg_loss = - p**alpha * (1 - gt)**beta * neg_mask * torch.log(1 - p)
+
+    num_pos = pos_mask.sum().clamp(min=1.0)
+    return (pos_loss.sum() + neg_loss.sum()) / num_pos
 
 # def uncertainty_loss(logvar, sqr_dists):
 #     sqr_dists = sqr_dists.clamp(min=1.+1e-6)

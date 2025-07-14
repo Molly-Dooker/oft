@@ -182,7 +182,7 @@ def compute_loss(pred_encoded, gt_encoded, loss_weights=[1., 1., 1., 1.]):
     score_weight, pos_weight, dim_weight, ang_weight = loss_weights
 
     # Compute losses
-    score_loss = heatmap_loss(score, heatmaps)
+    score_loss = heatmap_focal_loss(score, heatmaps)
     pos_loss = masked_l1_loss(pos_offsets, gt_pos_offsets, mask.unsqueeze(2))
     dim_loss = masked_l1_loss(dim_offsets, gt_dim_offsets, mask.unsqueeze(2))
     ang_loss = masked_l1_loss(ang_offsets, gt_ang_offsets, mask.unsqueeze(2))
