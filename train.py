@@ -18,13 +18,39 @@ from torch import optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from loguru import logger
+import sys
 import ipdb
 import oft
 from oft import OftNet, KittiObjectDataset, MetricDict, masked_l1_loss, heatmap_loss, ObjectEncoder
 
+
+
+def logger_setup(prefix: str = '', logpath: str = './logs'):
+    def console_filter(record):
+        return not record["extra"].get("file_only", False)
+
+    logger.remove()
+    LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {extra[prefix]} | {level} | {message}"
+
+    logger.add(
+        sys.stdout,
+        level="INFO",
+        format=LOG_FORMAT,
+        filter=console_filter
+    )
+    logger.add(
+        f"{logpath}/log",
+        rotation="500 MB",
+        level="INFO",
+        format=LOG_FORMAT
+    )
+
+    # bind 한 뒤 리턴
+    return logger.bind(prefix=prefix)
+
 def train(args, dataloader, model, encoder, optimizer, summary, epoch):
     
-    print('\n==> Training on {} minibatches'.format(len(dataloader)))
+    logger.info('==> Training on {} minibatches'.format(len(dataloader)))
     model.train()
     epoch_loss = oft.MetricDict()
 
@@ -53,7 +79,6 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
         # Print summary
         if i % args.print_iter == 0 and i != 0:
             batch_time = (time.time() - t) / (1 if i == 0 else args.print_iter)
@@ -64,7 +89,7 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
                 str(timedelta(seconds=int(eta))))
             for k, v in loss_dict.items():
                 s += '{}: {:.2e} '.format(k, v)
-            print(s)
+            logger.info(s)
             t = time.time()
         
         # Visualize predictions
@@ -87,9 +112,10 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
         # TODO decode and save results        
 
     # Print epoch summary and save results
-    print('==> Training epoch complete')
+    logger.info('==> Training epoch complete')
     for key, value in epoch_loss.mean.items():
-        print('{:8s}: {:.4e}'.format(key, value))
+        ipdb.set_trace()
+        logger.info('{:8s}: {:.4e}'.format(key, value))
         summary.add_scalar('train/loss/{}'.format(key), value, epoch)
 
         
@@ -97,7 +123,7 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
 
 def validate(args, dataloader, model, encoder, summary, epoch):
     
-    print('\n==> Validating on {} minibatches\n'.format(len(dataloader)))
+    logger.info('==> Validating on {} minibatches\n'.format(len(dataloader)))
     model.eval()
     epoch_loss = MetricDict()
 
@@ -141,9 +167,9 @@ def validate(args, dataloader, model, encoder, summary, epoch):
 
     # TODO evaluate
     
-    print('\n==> Validation epoch complete')
+    logger.info('==> Validation epoch complete')
     for key, value in epoch_loss.mean.items():
-        print('{:8s}: {:.4e}'.format(key, value))
+        logger.info('{:8s}: {:.4e}'.format(key, value))
         summary.add_scalar('val/loss/{}'.format(key), value, epoch)
     
     
@@ -319,20 +345,16 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
     }
     ckpt_file = os.path.join(
         args.savedir, args.name, 'checkpoint-{:04d}.pth.gz'.format(epoch))
-    print('==> Saving checkpoint \'{}\''.format(ckpt_file))
+    logger.info('==> Saving checkpoint \'{}\''.format(ckpt_file))
     torch.save(ckpt, ckpt_file)
 
 
 
 
-def main():
-
+def main(args):
     # Parse command line arguments
-    args = parse_args()
-
     # Create experiment
     summary = _make_experiment(args)
-
     # Create datasets
     train_data = KittiObjectDataset(
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
@@ -368,12 +390,11 @@ def main():
 
     for epoch in range(1, args.epochs+1):
 
-        print('\n=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))
+        logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))
         
         # Update and log learning rate
         scheduler.step(epoch-1)
         summary.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
-        ipdb.set_trace()
         # Train model
         train(args, train_loader, model, encoder, optimizer, summary, epoch)
 
@@ -384,7 +405,9 @@ def main():
             save_checkpoint(args, epoch, model, optimizer, scheduler)
 
 if __name__ == '__main__':
-    main()
+    args = parse_args()
+    logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
+    main(args)
 
             
 
