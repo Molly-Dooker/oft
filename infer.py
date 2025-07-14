@@ -46,9 +46,8 @@ def parse_args():
 
 def main():
     args = parse_args()
-
     # 출력 디렉터리 준비
-    out_dir = 'outputs'
+    out_dir = args.modelpath[:-7]
     os.makedirs(out_dir, exist_ok=True)
 
     # 데이터셋 로드
