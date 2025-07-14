@@ -5,7 +5,7 @@ from PIL import Image
 import numpy as np
 from torch.utils.data import Dataset
 from torchvision.transforms.functional import to_tensor
-
+import ipdb
 from .. import utils
 
 KITTI_CLASS_NAMES = ['Car', 'Van', 'Truck', 'Pedestrian', 'Person_sitting',
@@ -17,6 +17,7 @@ class KittiObjectDataset(Dataset):
                  grid_res=0.5, y_offset=1.74):
         
         # Get the root directory containing object detection data
+        # ipdb.set_trace()
         kitti_split = 'testing' if split == 'test' else 'training'
         self.root = os.path.join(kitti_root, 'object', kitti_split)
 

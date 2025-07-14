@@ -4,11 +4,10 @@ import yaml
 import math
 import numpy as np
 import matplotlib
-matplotlib.use('Agg', warn=False)
+# matplotlib.use('Agg', warn=False)
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
-
 from datetime import datetime, timedelta
 from argparse import ArgumentParser
 
@@ -18,7 +17,8 @@ import torch.nn as nn
 from torch import optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-
+from loguru import logger
+import ipdb
 import oft
 from oft import OftNet, KittiObjectDataset, MetricDict, masked_l1_loss, heatmap_loss, ObjectEncoder
 
@@ -266,7 +266,7 @@ def parse_args():
                         help='directory to save experiments to')
     parser.add_argument('-g', '--gpu', type=int, nargs='*', default=[0],
                         help='ids of gpus to train on. Leave empty to use cpu')
-    parser.add_argument('-w', '--workers', type=int, default=4,
+    parser.add_argument('-w', '--workers', type=int, default=8,
                         help='number of worker threads to use for data loading')
     parser.add_argument('--val-interval', type=int, default=5,
                         help='number of epochs between validation runs')
@@ -373,16 +373,13 @@ def main():
         # Update and log learning rate
         scheduler.step(epoch-1)
         summary.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
-
+        ipdb.set_trace()
         # Train model
         train(args, train_loader, model, encoder, optimizer, summary, epoch)
 
         # Run validation every N epochs
-        if epoch % args.val_interval == 0:
-
-            
+        if epoch % args.val_interval == 0:            
             validate(args, val_loader, model, encoder, summary, epoch)
-
             # Save model checkpoint
             save_checkpoint(args, epoch, model, optimizer, scheduler)
 
