@@ -123,7 +123,7 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
 
 def validate(args, dataloader, model, encoder, summary, epoch):
     
-    logger.info('==> Validating on {} minibatches\n'.format(len(dataloader)))
+    logger.info('==> Validating on {} minibatches'.format(len(dataloader)))
     model.eval()
     epoch_loss = MetricDict()
 
@@ -354,6 +354,8 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
 def main(args):
     # Parse command line arguments
     # Create experiment
+    lr = args.lr*len(args.gpu)
+    args.lr = lr
     summary = _make_experiment(args)
     # Create datasets
     train_data = KittiObjectDataset(
