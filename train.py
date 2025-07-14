@@ -114,7 +114,7 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
     # Print epoch summary and save results
     logger.info('==> Training epoch complete')
     for key, value in epoch_loss.mean.items():
-        ipdb.set_trace()
+        # ipdb.set_trace()
         logger.info('{:8s}: {:.4e}'.format(key, value))
         summary.add_scalar('train/loss/{}'.format(key), value, epoch)
 
