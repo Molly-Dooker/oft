@@ -59,8 +59,8 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
         
         # Move tensors to GPU
-        if len(args.gpu) > 0:
-            image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
+        # if len(args.gpu) > 0:
+        #     image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
 
         # Run network forwards
         pred_encoded = model(image, calib, grid)
@@ -77,7 +77,7 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
 
         # Optimize
         optimizer.zero_grad()
-        loss.backward()
+        accelerator.backward(loss)
         optimizer.step()
         # Print summary
         if i % args.print_iter == 0 and i != 0:
@@ -92,22 +92,22 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
             logger.info(s)
             t = time.time()
         
-        # Visualize predictions
-        if i % args.vis_iter == 0:
+        # # Visualize predictions
+        # if i % args.vis_iter == 0:
 
-            # Visualize image
-            summary.add_image('train/image', visualize_image(image), epoch)
+        #     # Visualize image
+        #     summary.add_image('train/image', visualize_image(image), epoch)
 
-            # Visualize scores
-            summary.add_figure('train/score', 
-                visualize_score(pred_encoded[0], gt_encoded[0], grid), epoch)
+        #     # Visualize scores
+        #     summary.add_figure('train/score', 
+        #         visualize_score(pred_encoded[0], gt_encoded[0], grid), epoch)
             
-            # Decode predictions
-            preds = encoder.decode_batch(*pred_encoded, grid)
+        #     # Decode predictions
+        #     preds = encoder.decode_batch(*pred_encoded, grid)
 
-            # Visualise bounding boxes
-            summary.add_figure('train/bboxes',
-                visualise_bboxes(image, calib, objects, preds), epoch)
+        #     # Visualise bounding boxes
+        #     summary.add_figure('train/bboxes',
+        #         visualise_bboxes(image, calib, objects, preds), epoch)
         
         # TODO decode and save results        
 
@@ -118,9 +118,6 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
         logger.info('{:8s}: {:.4e}'.format(key, value))
         summary.add_scalar('train/loss/{}'.format(key), value, epoch)
 
-        
-
-
 def validate(args, dataloader, model, encoder, summary, epoch):
     
     logger.info('==> Validating on {} minibatches'.format(len(dataloader)))
@@ -130,8 +127,8 @@ def validate(args, dataloader, model, encoder, summary, epoch):
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
 
         # Move tensors to GPU
-        if len(args.gpu) > 0:
-            image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
+        # if len(args.gpu) > 0:
+        #     image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
 
         with torch.no_grad():
 
@@ -171,8 +168,6 @@ def validate(args, dataloader, model, encoder, summary, epoch):
     for key, value in epoch_loss.mean.items():
         logger.info('{:8s}: {:.4e}'.format(key, value))
         summary.add_scalar('val/loss/{}'.format(key), value, epoch)
-    
-    
 
 def compute_loss(pred_encoded, gt_encoded, loss_weights=[1., 1., 1., 1.]):
 
@@ -199,7 +194,6 @@ def compute_loss(pred_encoded, gt_encoded, loss_weights=[1., 1., 1., 1.]):
     }
 
     return total_loss, loss_dict
-
 
 def visualize_image(image):
     return image[0].cpu().detach()
@@ -229,8 +223,6 @@ def visualise_bboxes(image, calib, objects, preds):
     ax2.set_title('Ground truth')
 
     return fig
-
-
 
 def parse_args():
     parser = ArgumentParser()
@@ -290,8 +282,8 @@ def parse_args():
     parser.add_argument('-s', '--savedir', type=str, 
                         default='experiments',
                         help='directory to save experiments to')
-    parser.add_argument('-g', '--gpu', type=int, nargs='*', default=[0],
-                        help='ids of gpus to train on. Leave empty to use cpu')
+    # parser.add_argument('-g', '--gpu', type=int, nargs='*', default=[0],
+    #                     help='ids of gpus to train on. Leave empty to use cpu')
     parser.add_argument('-w', '--workers', type=int, default=8,
                         help='number of worker threads to use for data loading')
     parser.add_argument('--val-interval', type=int, default=5,
@@ -301,19 +293,18 @@ def parse_args():
     parser.add_argument('--vis-iter', type=int, default=50,
                         help='display visualizations every N iterations')
     return parser.parse_args()
-    
 
 def _make_experiment(args):
-
-    print('\n' + '#' * 80)
-    print(datetime.now().strftime('%A %-d %B %Y %H:%M'))
-    print('Creating experiment \'{}\' in directory:\n  {}'.format(
-        args.name, args.savedir))
-    print('#' * 80)
-    print('\nConfig:')
-    for key in sorted(args.__dict__):
-        print('  {:12s} {}'.format(key + ':', args.__dict__[key]))
-    print('#' * 80)
+    if accelerator.is_main_process:
+        print('\n' + '#' * 80)
+        print(datetime.now().strftime('%A %-d %B %Y %H:%M'))
+        print('Creating experiment \'{}\' in directory:\n  {}'.format(
+            args.name, args.savedir))
+        print('#' * 80)
+        print('\nConfig:')
+        for key in sorted(args.__dict__):
+            print('  {:12s} {}'.format(key + ':', args.__dict__[key]))
+        print('#' * 80)
     
     # Create a new directory for the experiment
     savedir = os.path.join(args.savedir, args.name)
@@ -332,8 +323,7 @@ def _make_experiment(args):
     summary.file_writer.flush()
 
     return summary
-    
-    
+
 def save_checkpoint(args, epoch, model, optimizer, scheduler):
 
     model = model.module if isinstance(model, nn.DataParallel) else model
@@ -348,12 +338,7 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
     logger.info('==> Saving checkpoint \'{}\''.format(ckpt_file))
     torch.save(ckpt, ckpt_file)
 
-
-
-
 def main(args):
-    # Parse command line arguments
-    # Create experiment
     lr = args.lr*len(args.gpu)
     args.lr = lr
     summary = _make_experiment(args)
@@ -378,11 +363,6 @@ def main(args):
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
-    if len(args.gpu) > 0:
-        torch.cuda.set_device(args.gpu[0])
-        model = nn.DataParallel(model, args.gpu).cuda()
-
-    # Create encoder
     encoder = ObjectEncoder()
 
     # Setup optimizer
@@ -390,16 +370,18 @@ def main(args):
         model.parameters(), args.lr, args.momentum, args.weight_decay)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, args.lr_decay)
 
-    for epoch in range(1, args.epochs+1):
+    model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+        model, optimizer, train_loader, val_loader, scheduler
+    )
 
-        logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))
-        
+
+    for epoch in range(1, args.epochs+1):
+        logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))        
         # Update and log learning rate
         scheduler.step(epoch-1)
         summary.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
         # Train model
         train(args, train_loader, model, encoder, optimizer, summary, epoch)
-
         # Run validation every N epochs
         if epoch % args.val_interval == 0:            
             validate(args, val_loader, model, encoder, summary, epoch)
