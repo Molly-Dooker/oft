@@ -18,6 +18,8 @@ accelerator = Accelerator()
 def logger_setup(prefix: str = '', logpath: str = './logs'):
     def console_filter(record):
         return not record["extra"].get("file_only", False)
+    def file_filter(record):
+        return "console_only" not in record["extra"]
     logger.remove()
     LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {extra[prefix]} | {level} | {message}"
     logger.add(
@@ -30,13 +32,13 @@ def logger_setup(prefix: str = '', logpath: str = './logs'):
         f"{logpath}/log",
         rotation="500 MB",
         level="INFO",
-        format=LOG_FORMAT
+        format=LOG_FORMAT,
+        filter=file_filter
     )
     return logger.bind(prefix=prefix)
 
 def train(args, dataloader, model, encoder, optimizer, epoch):
-    if accelerator.is_main_process:
-        logger.info('==> Training on {} minibatches'.format(len(dataloader)))
+    if accelerator.is_main_process: logger.bind(console_only=True).info('==> Training on {} minibatches'.format(len(dataloader)))
     model.train()
     epoch_loss = oft.MetricDict()
     t = time.time()    
@@ -74,17 +76,16 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
                     str(timedelta(seconds=int(eta))))
                 for k, v in loss_dict.items():
                     s += '{}: {:.2e} '.format(k, v)
-                logger.info(s)
+                logger.bind(console_only=True).info(s)
                 t = time.time() 
     if accelerator.is_main_process:
-        logger.info('==> Training epoch complete')
+        logger.info('==> Training complete')
         for key, value in epoch_loss.mean.items():
             logger.info('{:8s}: {:.4e}'.format(key, value))
 
 
 def validate(args, dataloader, model, encoder, epoch):
-    if accelerator.is_main_process:
-        logger.info('==> Validating on {} minibatches'.format(len(dataloader)))
+    if accelerator.is_main_process: logger.bind(console_only=True).info('==> Validating on {} minibatches'.format(len(dataloader)))
     model.eval()
     epoch_loss = MetricDict()
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
@@ -109,7 +110,7 @@ def validate(args, dataloader, model, encoder, epoch):
             }
             epoch_loss += synced_loss_dict       
     if accelerator.is_main_process:
-        logger.info('==> Validation epoch complete')
+        logger.info('==> Validation complete')
         for key, value in epoch_loss.mean.items():
             logger.info('{:8s}: {:.4e}'.format(key, value))
 
@@ -201,34 +202,26 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
     ckpt_file = os.path.join(
         args.savedir, args.name, 'checkpoint-{:04d}.pth.gz'.format(epoch))
 
-    logger.info('==> Saving checkpoint \'{}\''.format(ckpt_file))
+    logger.bind(console_only=True).info('==> Saving checkpoint \'{}\''.format(ckpt_file))
     torch.save(ckpt, ckpt_file)
 
 def main(args):
-    if accelerator.is_main_process:
-        print(f'num process : {accelerator.num_processes}')
-    lr = args.lr*accelerator.num_processes
-    args.lr = lr
-    # Create datasets
+    args.lr = args.lr*accelerator.num_processes
     train_data = KittiObjectDataset(
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
     val_data = KittiObjectDataset(
         args.root, 'val', args.grid_size, args.grid_res, args.yoffset)
-    # Apply data augmentation
     train_data = oft.AugmentedObjectDataset(
         train_data, args.train_image_size, args.train_grid_size, 
         jitter=args.grid_jitter)
-    # Create dataloaders
     train_loader = DataLoader(train_data, args.batch_size, shuffle=True, 
         num_workers=args.workers, collate_fn=oft.utils.collate)
     val_loader = DataLoader(val_data, args.batch_size, shuffle=False, 
         num_workers=args.workers,collate_fn=oft.utils.collate)
-    # Build model
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
     encoder = ObjectEncoder()
-    # Setup optimizer
     optimizer = optim.SGD(
         model.parameters(), args.lr, args.momentum, args.weight_decay)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, args.lr_decay)
@@ -237,18 +230,12 @@ def main(args):
         model, optimizer, train_loader, val_loader, scheduler
     )
     for epoch in range(1, args.epochs+1):
-        if accelerator.is_main_process:
-            logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))        
-        # Update and log learning rate
+        if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')        
         scheduler.step(epoch-1)
-        # Train model
         train(args, train_loader, model, encoder, optimizer, epoch)
-        # Run validation every N epochs
         if epoch % args.val_interval == 0:            
             validate(args, val_loader, model, encoder, epoch)
-            # Save model checkpoint
-            if accelerator.is_main_process:
-                save_checkpoint(args, epoch, model, optimizer, scheduler)
+            if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
 if __name__ == '__main__':
     args = parse_args()
     logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
