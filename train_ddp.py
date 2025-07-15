@@ -16,7 +16,6 @@ import torch
 import torch.nn as nn
 from torch import optim
 from torch.utils.data import DataLoader
-from tensorboardX import SummaryWriter
 from loguru import logger
 import sys
 import ipdb
@@ -48,19 +47,14 @@ def logger_setup(prefix: str = '', logpath: str = './logs'):
     # bind 한 뒤 리턴
     return logger.bind(prefix=prefix)
 
-def train(args, dataloader, model, encoder, optimizer, summary, epoch):
-    
-    logger.info('==> Training on {} minibatches'.format(len(dataloader)))
+def train(args, dataloader, model, encoder, optimizer, epoch):
+    if accelerator.is_main_process:
+        logger.info('==> Training on {} minibatches'.format(len(dataloader)))
     model.train()
     epoch_loss = oft.MetricDict()
-
-    t = time.time()
-    
+    t = time.time()    
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
         
-        # Move tensors to GPU
-        # if len(args.gpu) > 0:
-        #     image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
 
         # Run network forwards
         pred_encoded = model(image, calib, grid)
@@ -89,36 +83,19 @@ def train(args, dataloader, model, encoder, optimizer, summary, epoch):
                 str(timedelta(seconds=int(eta))))
             for k, v in loss_dict.items():
                 s += '{}: {:.2e} '.format(k, v)
-            logger.info(s)
+            if accelerator.is_main_process:
+                logger.info(s)
             t = time.time()
         
-        # # Visualize predictions
-        # if i % args.vis_iter == 0:
-
-        #     # Visualize image
-        #     summary.add_image('train/image', visualize_image(image), epoch)
-
-        #     # Visualize scores
-        #     summary.add_figure('train/score', 
-        #         visualize_score(pred_encoded[0], gt_encoded[0], grid), epoch)
-            
-        #     # Decode predictions
-        #     preds = encoder.decode_batch(*pred_encoded, grid)
-
-        #     # Visualise bounding boxes
-        #     summary.add_figure('train/bboxes',
-        #         visualise_bboxes(image, calib, objects, preds), epoch)
-        
-        # TODO decode and save results        
 
     # Print epoch summary and save results
-    logger.info('==> Training epoch complete')
-    for key, value in epoch_loss.mean.items():
-        # ipdb.set_trace()
-        logger.info('{:8s}: {:.4e}'.format(key, value))
-        summary.add_scalar('train/loss/{}'.format(key), value, epoch)
+    if accelerator.is_main_process:
+        logger.info('==> Training epoch complete')
+        for key, value in epoch_loss.mean.items():
+            logger.info('{:8s}: {:.4e}'.format(key, value))
 
-def validate(args, dataloader, model, encoder, summary, epoch):
+
+def validate(args, dataloader, model, encoder, epoch):
     
     logger.info('==> Validating on {} minibatches'.format(len(dataloader)))
     model.eval()
@@ -143,31 +120,17 @@ def validate(args, dataloader, model, encoder, summary, epoch):
                 pred_encoded, gt_encoded, args.loss_weights)       
             epoch_loss += loss_dict
         
-            # Decode predictions
-            preds = encoder.decode_batch(*pred_encoded, grid)
+            # # Decode predictions
+            # preds = encoder.decode_batch(*pred_encoded, grid)
         
-        # Visualize predictions
-        if i % args.vis_iter == 0:
-
-            # Visualize image
-            summary.add_image('val/image', visualize_image(image), epoch)
-
-            # Visualize scores
-            summary.add_figure('val/score', 
-                visualize_score(pred_encoded[0], gt_encoded[0], grid), epoch)
-            
-            # Visualise bounding boxes
-            summary.add_figure('val/bboxes',
-                visualise_bboxes(image, calib, objects, preds), epoch)
-            
         
 
     # TODO evaluate
-    
-    logger.info('==> Validation epoch complete')
-    for key, value in epoch_loss.mean.items():
-        logger.info('{:8s}: {:.4e}'.format(key, value))
-        summary.add_scalar('val/loss/{}'.format(key), value, epoch)
+    if accelerator.is_main_process:
+        logger.info('==> Validation epoch complete')
+        for key, value in epoch_loss.mean.items():
+            logger.info('{:8s}: {:.4e}'.format(key, value))
+
 
 def compute_loss(pred_encoded, gt_encoded, loss_weights=[1., 1., 1., 1.]):
 
@@ -290,39 +253,9 @@ def parse_args():
                         help='number of epochs between validation runs')
     parser.add_argument('--print-iter', type=int, default=10,
                         help='print loss summary every N iterations')
-    parser.add_argument('--vis-iter', type=int, default=50,
-                        help='display visualizations every N iterations')
+    # parser.add_argument('--vis-iter', type=int, default=50,
+    #                     help='display visualizations every N iterations')
     return parser.parse_args()
-
-def _make_experiment(args):
-    if accelerator.is_main_process:
-        print('\n' + '#' * 80)
-        print(datetime.now().strftime('%A %-d %B %Y %H:%M'))
-        print('Creating experiment \'{}\' in directory:\n  {}'.format(
-            args.name, args.savedir))
-        print('#' * 80)
-        print('\nConfig:')
-        for key in sorted(args.__dict__):
-            print('  {:12s} {}'.format(key + ':', args.__dict__[key]))
-        print('#' * 80)
-    
-    # Create a new directory for the experiment
-    savedir = os.path.join(args.savedir, args.name)
-    os.makedirs(savedir, exist_ok=True)
-
-    # Create tensorboard summary writer
-    summary = SummaryWriter(savedir)
-
-    # Save configuration to file
-    with open(os.path.join(savedir, 'config.yml'), 'w') as fp:
-        yaml.safe_dump(args.__dict__, fp)
-    
-    # Write config as a text summary
-    summary.add_text('config', '\n'.join(
-        '{:12s} {}'.format(k, v) for k, v in sorted(args.__dict__.items())))
-    summary.file_writer.flush()
-
-    return summary
 
 def save_checkpoint(args, epoch, model, optimizer, scheduler):
 
@@ -335,13 +268,15 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
     }
     ckpt_file = os.path.join(
         args.savedir, args.name, 'checkpoint-{:04d}.pth.gz'.format(epoch))
+
     logger.info('==> Saving checkpoint \'{}\''.format(ckpt_file))
     torch.save(ckpt, ckpt_file)
 
 def main(args):
-    lr = args.lr*len(args.gpu)
+    if accelerator.is_main_process:
+        print(f'num process : {accelerator.num_processes}')
+    lr = args.lr*accelerator.num_processes
     args.lr = lr
-    summary = _make_experiment(args)
     # Create datasets
     train_data = KittiObjectDataset(
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
@@ -376,17 +311,18 @@ def main(args):
 
 
     for epoch in range(1, args.epochs+1):
-        logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))        
+        if accelerator.is_main_process:
+            logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))        
         # Update and log learning rate
         scheduler.step(epoch-1)
-        summary.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
         # Train model
-        train(args, train_loader, model, encoder, optimizer, summary, epoch)
+        train(args, train_loader, model, encoder, optimizer, epoch)
         # Run validation every N epochs
         if epoch % args.val_interval == 0:            
-            validate(args, val_loader, model, encoder, summary, epoch)
+            validate(args, val_loader, model, encoder, epoch)
             # Save model checkpoint
-            save_checkpoint(args, epoch, model, optimizer, scheduler)
+            if accelerator.is_main_process:
+                save_checkpoint(args, epoch, model, optimizer, scheduler)
 
 if __name__ == '__main__':
     args = parse_args()
