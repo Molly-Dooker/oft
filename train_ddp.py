@@ -185,7 +185,7 @@ def parse_args():
                         help='directory to save experiments to')
     parser.add_argument('-w', '--workers', type=int, default=8,
                         help='number of worker threads to use for data loading')
-    parser.add_argument('--val-interval', type=int, default=5,
+    parser.add_argument('-vi','--val-interval', type=int, default=5,
                         help='number of epochs between validation runs')
     parser.add_argument('--print-iter', type=int, default=10,
                         help='print loss summary every N iterations')
@@ -206,6 +206,7 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
     torch.save(ckpt, ckpt_file)
 
 def main(args):
+    if accelerator.is_main_process: logger.bind(file_only=True).info(args)
     args.lr = args.lr*accelerator.num_processes
     train_data = KittiObjectDataset(
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
