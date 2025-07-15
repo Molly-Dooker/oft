@@ -361,7 +361,7 @@ def main(args):
     train_data = KittiObjectDataset(
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
     val_data = KittiObjectDataset(
-        args.root, 'test', args.grid_size, args.grid_res, args.yoffset)
+        args.root, 'val', args.grid_size, args.grid_res, args.yoffset)
     
     # Apply data augmentation
     train_data = oft.AugmentedObjectDataset(
