@@ -1,37 +1,28 @@
 import os
 import time
-import yaml
-import math
-import numpy as np
-import matplotlib
-# matplotlib.use('Agg', warn=False)
-from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
-from datetime import datetime, timedelta
+from datetime import timedelta
 from argparse import ArgumentParser
-
-from collections import defaultdict
 import torch
 import torch.nn as nn
 from torch import optim
 from torch.utils.data import DataLoader
-from tensorboardX import SummaryWriter
 from loguru import logger
 import sys
+import yaml
 import ipdb
 import oft
 from oft import OftNet, KittiObjectDataset, MetricDict, masked_l1_loss, heatmap_loss, ObjectEncoder, heatmap_focal_loss
-
-
+from accelerate import Accelerator
+accelerator = Accelerator()
 
 def logger_setup(prefix: str = '', logpath: str = './logs'):
     def console_filter(record):
         return not record["extra"].get("file_only", False)
-
+    def file_filter(record):
+        return "console_only" not in record["extra"]
     logger.remove()
     LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {extra[prefix]} | {level} | {message}"
-
     logger.add(
         sys.stdout,
         level="INFO",
@@ -42,199 +33,112 @@ def logger_setup(prefix: str = '', logpath: str = './logs'):
         f"{logpath}/log",
         rotation="500 MB",
         level="INFO",
-        format=LOG_FORMAT
+        format=LOG_FORMAT,
+        filter=file_filter
     )
-
-    # bind 한 뒤 리턴
     return logger.bind(prefix=prefix)
 
-def train(args, dataloader, model, encoder, optimizer, summary, epoch):
-    
-    logger.info('==> Training on {} minibatches'.format(len(dataloader)))
+def train(args, dataloader, model, encoder, optimizer, epoch):
+    if accelerator.is_main_process: logger.bind(console_only=True).info('==> Training on {} minibatches'.format(len(dataloader)))
     model.train()
     epoch_loss = oft.MetricDict()
-
-    t = time.time()
-    
+    if args.loss == 'focal': 
+        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=heatmap_focal_loss,loss_weights=loss_weights)
+    elif args.loss =='hm':
+        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=heatmap_loss,loss_weights=loss_weights)
+    t = time.time()    
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
-        
-        # Move tensors to GPU
-        if len(args.gpu) > 0:
-            image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
-
-        # Run network forwards
         pred_encoded = model(image, calib, grid)
-
-        # Encode ground truth objects
         gt_encoded = encoder.encode_batch(objects, grid)
-
-        # Compute losses
-        loss, loss_dict = compute_loss(
-            pred_encoded, gt_encoded, args.loss_weights)
-        if float(loss) != float(loss):
-            raise RuntimeError('Loss diverged :(')      
-        epoch_loss += loss_dict
-
+        loss, loss_dict = compute_loss_(pred_encoded, gt_encoded,args.loss_weights)
+        if torch.isnan(loss): 
+            raise RuntimeError('Loss diverged :(')
+        gathered_total_loss = accelerator.gather(loss_dict['total'])
+        gathered_score_loss = accelerator.gather(loss_dict['score'])
+        gathered_pos_loss = accelerator.gather(loss_dict['position'])
+        gathered_dim_loss = accelerator.gather(loss_dict['dimension'])
+        gathered_ang_loss = accelerator.gather(loss_dict['angle'])
+        synced_loss_dict = {
+            'total': torch.mean(gathered_total_loss).item(),
+            'score': torch.mean(gathered_score_loss).item(),
+            'position': torch.mean(gathered_pos_loss).item(),
+            'dimension': torch.mean(gathered_dim_loss).item(),
+            'angle': torch.mean(gathered_ang_loss).item(),
+        }
+        epoch_loss += synced_loss_dict
         # Optimize
         optimizer.zero_grad()
-        loss.backward()
+        accelerator.backward(loss)
         optimizer.step()
-        # Print summary
-        if i % args.print_iter == 0 and i != 0:
-            batch_time = (time.time() - t) / (1 if i == 0 else args.print_iter)
-            eta = ((args.epochs - epoch + 1) * len(dataloader) - i) * batch_time
+        if accelerator.is_main_process:
+            if i % args.print_iter == 0 and i != 0:
+                batch_time = (time.time() - t) / (1 if i == 0 else args.print_iter)
+                eta = ((args.epochs - epoch + 1) * len(dataloader) - i) * batch_time
 
-            s = '[{:4d}/{:4d}] batch_time: {:.2f}s eta: {:s} loss: '.format(
-                i, len(dataloader), batch_time, 
-                str(timedelta(seconds=int(eta))))
-            for k, v in loss_dict.items():
-                s += '{}: {:.2e} '.format(k, v)
-            logger.info(s)
-            t = time.time()
-        
-        # Visualize predictions
-        if i % args.vis_iter == 0:
+                s = '[{:4d}/{:4d}] batch_time: {:.2f}s eta: {:s} loss: '.format(
+                    i, len(dataloader), batch_time, 
+                    str(timedelta(seconds=int(eta))))
+                for k, v in loss_dict.items():
+                    s += '{}: {:.2e} '.format(k, v)
+                logger.bind(console_only=True).info(s)
+                t = time.time() 
+    if accelerator.is_main_process:
+        logger.info('==> Training complete')
+        for key, value in epoch_loss.mean.items():
+            logger.info('{:8s}: {:.4e}'.format(key, value))
 
-            # Visualize image
-            summary.add_image('train/image', visualize_image(image), epoch)
-
-            # Visualize scores
-            summary.add_figure('train/score', 
-                visualize_score(pred_encoded[0], gt_encoded[0], grid), epoch)
-            
-            # Decode predictions
-            preds = encoder.decode_batch(*pred_encoded, grid)
-
-            # Visualise bounding boxes
-            summary.add_figure('train/bboxes',
-                visualise_bboxes(image, calib, objects, preds), epoch)
-        
-        # TODO decode and save results        
-
-    # Print epoch summary and save results
-    logger.info('==> Training epoch complete')
-    for key, value in epoch_loss.mean.items():
-        # ipdb.set_trace()
-        logger.info('{:8s}: {:.4e}'.format(key, value))
-        summary.add_scalar('train/loss/{}'.format(key), value, epoch)
-
-        
-
-
-def validate(args, dataloader, model, encoder, summary, epoch):
-    
-    logger.info('==> Validating on {} minibatches'.format(len(dataloader)))
+def validate(args, dataloader, model, encoder, epoch):
+    if accelerator.is_main_process: logger.bind(console_only=True).info('==> Validating on {} minibatches'.format(len(dataloader)))
     model.eval()
     epoch_loss = MetricDict()
-
+    if args.loss == 'focal': 
+        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded, gt_encoded=gt_encoded, loss_function=heatmap_focal_loss, loss_weights=loss_weights)
+    elif args.loss =='hm':
+        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded, gt_encoded=gt_encoded, loss_function=heatmap_loss, loss_weights=loss_weights)
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
-
-        # Move tensors to GPU
-        if len(args.gpu) > 0:
-            image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
-
         with torch.no_grad():
-
             # Run network forwards
             pred_encoded = model(image, calib, grid)
-
             # Encode ground truth objects
             gt_encoded = encoder.encode_batch(objects, grid)
+            _, loss_dict_tensors = compute_loss_(pred_encoded, gt_encoded, args.loss_weights)      
+            gathered_total = accelerator.gather(loss_dict_tensors['total'])
+            gathered_score = accelerator.gather(loss_dict_tensors['score'])
+            gathered_pos = accelerator.gather(loss_dict_tensors['position'])
+            gathered_dim = accelerator.gather(loss_dict_tensors['dimension'])
+            gathered_ang = accelerator.gather(loss_dict_tensors['angle'])
+            synced_loss_dict = {
+                'total': torch.mean(gathered_total).item(),
+                'score': torch.mean(gathered_score).item(),
+                'position': torch.mean(gathered_pos).item(),
+                'dimension': torch.mean(gathered_dim).item(),
+                'angle': torch.mean(gathered_ang).item(),
+            }
+            epoch_loss += synced_loss_dict       
+    if accelerator.is_main_process:
+        logger.info('==> Validation complete')
+        for key, value in epoch_loss.mean.items():
+            logger.info('{:8s}: {:.4e}'.format(key, value))
 
-            # Compute losses
-            _, loss_dict = compute_loss(
-                pred_encoded, gt_encoded, args.loss_weights)       
-            epoch_loss += loss_dict
-        
-            # Decode predictions
-            preds = encoder.decode_batch(*pred_encoded, grid)
-        
-        # Visualize predictions
-        if i % args.vis_iter == 0:
-
-            # Visualize image
-            summary.add_image('val/image', visualize_image(image), epoch)
-
-            # Visualize scores
-            summary.add_figure('val/score', 
-                visualize_score(pred_encoded[0], gt_encoded[0], grid), epoch)
-            
-            # Visualise bounding boxes
-            summary.add_figure('val/bboxes',
-                visualise_bboxes(image, calib, objects, preds), epoch)
-            
-        
-
-    # TODO evaluate
-    
-    logger.info('==> Validation epoch complete')
-    for key, value in epoch_loss.mean.items():
-        logger.info('{:8s}: {:.4e}'.format(key, value))
-        summary.add_scalar('val/loss/{}'.format(key), value, epoch)
-    
-    
-
-def compute_loss(pred_encoded, gt_encoded, loss_weights=[1., 1., 1., 1.]):
-
-    # Expand tuples
+def compute_loss(pred_encoded, gt_encoded, loss_function, loss_weights=[1., 1., 1., 1.]):
     score, pos_offsets, dim_offsets, ang_offsets = pred_encoded
     heatmaps, gt_pos_offsets, gt_dim_offsets, gt_ang_offsets, mask = gt_encoded
     score_weight, pos_weight, dim_weight, ang_weight = loss_weights
-
-    # Compute losses
-    score_loss = heatmap_loss(score, heatmaps)
+    score_loss = loss_function(score, heatmaps)
     pos_loss = masked_l1_loss(pos_offsets, gt_pos_offsets, mask.unsqueeze(2))
     dim_loss = masked_l1_loss(dim_offsets, gt_dim_offsets, mask.unsqueeze(2))
     ang_loss = masked_l1_loss(ang_offsets, gt_ang_offsets, mask.unsqueeze(2))
-
-    # Combine loss
     total_loss = score_loss * score_weight + pos_loss * pos_weight \
             + dim_loss * dim_weight + ang_loss * ang_weight
-    
-    # Store scalar losses in a dictionary
     loss_dict = {
-        'score' : float(score_loss), 'position' : float(pos_loss),
-        'dimension' : float(dim_loss), 'angle' : float(ang_loss),
-        'total' : float(total_loss) 
+        'score' : score_loss, 'position' : pos_loss,
+        'dimension' : dim_loss, 'angle' : ang_loss,
+        'total' : total_loss
     }
-
     return total_loss, loss_dict
-
-
-def visualize_image(image):
-    return image[0].cpu().detach()
-
-def visualize_score(scores, heatmaps, grid):
-
-    # Visualize score
-    fig_score = plt.figure(num='score', figsize=(8, 6))
-    fig_score.clear()
-
-    oft.vis_score(scores[0, 0], grid[0], ax=plt.subplot(121))
-    oft.vis_score(heatmaps[0, 0], grid[0], ax=plt.subplot(122))
-
-    return fig_score
-
-def visualise_bboxes(image, calib, objects, preds):
-
-    fig = plt.figure(num='bbox', figsize=(8, 6))
-    fig.clear()
-    ax1 = plt.subplot(211)
-    ax2 = plt.subplot(212)
-
-    oft.visualize_objects(image[0], calib[0], preds[0], ax=ax1)
-    ax1.set_title('Predictions')
-
-    oft.visualize_objects(image[0], calib[0], objects[0], ax=ax2)
-    ax2.set_title('Ground truth')
-
-    return fig
-
-
 
 def parse_args():
     parser = ArgumentParser()
-
     # Data options
     parser.add_argument('--root', type=str, default='data/kitti',
                         help='root directory of the KITTI dataset')
@@ -251,7 +155,6 @@ def parse_args():
                         help='size of random image crops during training')
     parser.add_argument('--yoffset', type=float, default=1.74,
                         help='vertical offset of the grid from the camera axis')
-    
     # Model options
     parser.add_argument('--grid-height', type=float, default=4.,
                         help='size of grid cells, in meters')
@@ -262,7 +165,6 @@ def parse_args():
                         help='name of frontend ResNet architecture')
     parser.add_argument('--topdown', type=int, default=8,
                         help='number of residual blocks in topdown network')
-    
     # Optimization options
     parser.add_argument('-l', '--lr', type=float, default=1e-9,
                         help='learning rate')
@@ -276,66 +178,29 @@ def parse_args():
                         default=[1., 1., 1., 1.],
                         help="loss weighting factors for score, position,"\
                             " dimension and angle loss respectively")
-
-
     # Training options
     parser.add_argument('-e', '--epochs', type=int, default=600,
                         help='number of epochs to train for')
     parser.add_argument('-b', '--batch-size', type=int, default=1,
                         help='mini-batch size for training')
-    
     # Experiment options
     parser.add_argument('name', type=str, default='test',
                         help='name of experiment')
     parser.add_argument('-s', '--savedir', type=str, 
                         default='experiments',
                         help='directory to save experiments to')
-    parser.add_argument('-g', '--gpu', type=int, nargs='*', default=[0],
-                        help='ids of gpus to train on. Leave empty to use cpu')
     parser.add_argument('-w', '--workers', type=int, default=8,
                         help='number of worker threads to use for data loading')
-    parser.add_argument('--val-interval', type=int, default=5,
+    parser.add_argument('-vi','--val-interval', type=int, default=5,
                         help='number of epochs between validation runs')
     parser.add_argument('--print-iter', type=int, default=10,
                         help='print loss summary every N iterations')
-    parser.add_argument('--vis-iter', type=int, default=50,
-                        help='display visualizations every N iterations')
+    parser.add_argument('--loss', type=str, default='hm',
+                        choices=['focal', 'hm'],
+                        help="loss function for heatmap: 'focal' or 'heatmap'")
     return parser.parse_args()
-    
 
-def _make_experiment(args):
-
-    print('\n' + '#' * 80)
-    print(datetime.now().strftime('%A %-d %B %Y %H:%M'))
-    print('Creating experiment \'{}\' in directory:\n  {}'.format(
-        args.name, args.savedir))
-    print('#' * 80)
-    print('\nConfig:')
-    for key in sorted(args.__dict__):
-        print('  {:12s} {}'.format(key + ':', args.__dict__[key]))
-    print('#' * 80)
-    
-    # Create a new directory for the experiment
-    savedir = os.path.join(args.savedir, args.name)
-    os.makedirs(savedir, exist_ok=True)
-
-    # Create tensorboard summary writer
-    summary = SummaryWriter(savedir)
-
-    # Save configuration to file
-    with open(os.path.join(savedir, 'config.yml'), 'w') as fp:
-        yaml.safe_dump(args.__dict__, fp)
-    
-    # Write config as a text summary
-    summary.add_text('config', '\n'.join(
-        '{:12s} {}'.format(k, v) for k, v in sorted(args.__dict__.items())))
-    summary.file_writer.flush()
-
-    return summary
-    
-    
 def save_checkpoint(args, epoch, model, optimizer, scheduler):
-
     model = model.module if isinstance(model, nn.DataParallel) else model
     ckpt = {
         'epoch' : epoch,
@@ -345,71 +210,50 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
     }
     ckpt_file = os.path.join(
         args.savedir, args.name, 'checkpoint-{:04d}.pth.gz'.format(epoch))
-    logger.info('==> Saving checkpoint \'{}\''.format(ckpt_file))
+
+    logger.bind(console_only=True).info('==> Saving checkpoint \'{}\''.format(ckpt_file))
     torch.save(ckpt, ckpt_file)
 
-
-
-
 def main(args):
-    # Parse command line arguments
-    # Create experiment
-    lr = args.lr*len(args.gpu)
-    args.lr = lr
-    summary = _make_experiment(args)
-    # Create datasets
+    if accelerator.is_main_process: 
+        logger.info("===== ACCELERATOR CONFIGURATION =====")
+        state_dict = {k: v for k, v in accelerator.state.__dict__.items() if not k.startswith('_')}
+        accel_config_str = yaml.dump(state_dict, default_flow_style=False)
+        logger.info(f"\n{accel_config_str}")        
+        logger.info("===== SCRIPT ARGUMENTS =====")
+        args_config_str = yaml.dump(args.__dict__, default_flow_style=False)
+        logger.info(f"\n{args_config_str}")
+        logger.info("===================================")
+    args.lr = args.lr*accelerator.num_processes
     train_data = KittiObjectDataset(
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
     val_data = KittiObjectDataset(
         args.root, 'val', args.grid_size, args.grid_res, args.yoffset)
-    
-    # Apply data augmentation
     train_data = oft.AugmentedObjectDataset(
         train_data, args.train_image_size, args.train_grid_size, 
         jitter=args.grid_jitter)
-
-    # Create dataloaders
     train_loader = DataLoader(train_data, args.batch_size, shuffle=True, 
         num_workers=args.workers, collate_fn=oft.utils.collate)
     val_loader = DataLoader(val_data, args.batch_size, shuffle=False, 
         num_workers=args.workers,collate_fn=oft.utils.collate)
-
-    # Build model
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
-    if len(args.gpu) > 0:
-        torch.cuda.set_device(args.gpu[0])
-        model = nn.DataParallel(model, args.gpu).cuda()
-
-    # Create encoder
     encoder = ObjectEncoder()
-
-    # Setup optimizer
     optimizer = optim.SGD(
         model.parameters(), args.lr, args.momentum, args.weight_decay)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, args.lr_decay)
-
+    model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
+        model, optimizer, train_loader, val_loader, scheduler
+    )
     for epoch in range(1, args.epochs+1):
-
-        logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))
-        
-        # Update and log learning rate
+        if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')        
         scheduler.step(epoch-1)
-        summary.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
-        # Train model
-        train(args, train_loader, model, encoder, optimizer, summary, epoch)
-
-        # Run validation every N epochs
+        train(args, train_loader, model, encoder, optimizer, epoch)
         if epoch % args.val_interval == 0:            
-            validate(args, val_loader, model, encoder, summary, epoch)
-            # Save model checkpoint
-            save_checkpoint(args, epoch, model, optimizer, scheduler)
-
+            validate(args, val_loader, model, encoder, epoch)
+            if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
 if __name__ == '__main__':
     args = parse_args()
     logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
     main(args)
-
-            
-
