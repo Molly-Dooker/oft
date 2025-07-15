@@ -247,12 +247,12 @@ def main(args):
         model, optimizer, train_loader, val_loader, scheduler
     )
     for epoch in range(1, args.epochs+1):
-        if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')        
-        scheduler.step(epoch-1)
+        if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')
         train(args, train_loader, model, encoder, optimizer, epoch)
         if epoch % args.val_interval == 0:            
             validate(args, val_loader, model, encoder, epoch)
             if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
+        scheduler.step(epoch-1)
 if __name__ == '__main__':
     args = parse_args()
     logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
