@@ -166,7 +166,7 @@ def parse_args():
     parser.add_argument('--topdown', type=int, default=8,
                         help='number of residual blocks in topdown network')
     # Optimization options
-    parser.add_argument('-l', '--lr', type=float, default=1e-4,
+    parser.add_argument('-l', '--lr', type=float, default=1e-5,
                         help='learning rate')
     parser.add_argument('--warm', type=int, default=5,
                         help='warmup epochs')
