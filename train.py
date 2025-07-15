@@ -249,7 +249,7 @@ def main(args):
         train(args, train_loader, model, encoder, optimizer, epoch)
         if epoch % args.val_interval == 0:            
             validate(args, val_loader, model, encoder, epoch)
-        if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
+            if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
         scheduler.step()
 if __name__ == '__main__':
     args = parse_args()
