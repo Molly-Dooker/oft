@@ -120,8 +120,8 @@ def compute_loss(pred_encoded, gt_encoded, loss_function, loss_weights=[1., 1., 
     pos_loss = masked_l1_loss(pos_offsets, gt_pos_offsets, mask.unsqueeze(2))
     dim_loss = masked_l1_loss(dim_offsets, gt_dim_offsets, mask.unsqueeze(2))
     ang_loss = masked_l1_loss(ang_offsets, gt_ang_offsets, mask.unsqueeze(2))
-    total_loss = score_loss * score_weight + pos_loss * pos_weight \
-            + dim_loss * dim_weight + ang_loss * ang_weight
+    score_loss *= score_weight; pos_loss *= pos_weight; dim_loss *= dim_weight; ang_loss *= ang_weight
+    total_loss = score_loss + pos_loss + dim_loss + ang_loss
     loss_dict = {
         'score' : score_loss, 'position' : pos_loss,
         'dimension' : dim_loss, 'angle' : ang_loss,
@@ -249,7 +249,7 @@ def main(args):
         train(args, train_loader, model, encoder, optimizer, epoch)
         if epoch % args.val_interval == 0:            
             validate(args, val_loader, model, encoder, epoch)
-            if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
+        if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
         scheduler.step()
 if __name__ == '__main__':
     args = parse_args()

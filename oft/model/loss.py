@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-
+from torchvision.ops import sigmoid_focal_loss
 
 
 
@@ -61,57 +61,19 @@ def balanced_cross_entropy_loss(scores, labels):
 
 
 def heatmap_loss(heatmap, gt_heatmap, weights=[100], thresh=0.05):
-    
     positives = (gt_heatmap > thresh).float()
     weights = heatmap.new(weights).view(1, -1, 1, 1)
-
     loss = F.l1_loss(heatmap, gt_heatmap, reduce=False)
-    
     loss *= positives * weights + (1 - positives)
     return loss.sum()
 
-def focal_loss(pred_heatmap, gt_heatmap, alpha=0.25, gamma=2.0):
-    """
-    Focal loss for heatmaps.
-    
-    Args:
-        pred_heatmap (torch.Tensor): Predicted heatmaps (logits) from the model.
-        gt_heatmap (torch.Tensor): Ground truth heatmaps.
-        alpha (float): Alpha balancing factor.
-        gamma (float): Gamma focusing factor.
-    """
-    # 모델 출력을 확률 값으로 변환
-    p = torch.sigmoid(pred_heatmap)
-
-    # BCE Loss 계산을 위한 준비
-    # p_t는 정답 레이블에 대한 모델의 예측 확률을 의미합니다.
-    # gt=1일 때 p_t=p, gt=0일 때 p_t=1-p
-    p_t = p * gt_heatmap + (1 - p) * (1 - gt_heatmap)
-    
-    # Modulating factor (1 - p_t)^gamma
-    # 핵심: p_t가 1에 가까울수록(쉬운 샘플), 이 값이 0에 가까워져 loss를 줄여줌
-    modulating_factor = (1.0 - p_t).pow(gamma)
-    
-    # Alpha-balanced factor
-    # 클래스별 가중치. gt=1일 때 alpha, gt=0일 때 1-alpha
-    alpha_t = alpha * gt_heatmap + (1 - alpha) * (1 - gt_heatmap)
-    
-    # Focal Loss 계산
-    # F.binary_cross_entropy_with_logits는 sigmoid와 bce_loss를 합친 것과 같습니다.
-    # 수치적으로 더 안정적입니다.
-    bce_loss = F.binary_cross_entropy_with_logits(pred_heatmap, gt_heatmap, reduction='none')
-    
-    focal_loss = alpha_t * modulating_factor * bce_loss
-    
-    # 정답 위치(positive)의 개수로 나누어 정규화하거나, 전체 픽셀 수로 나눌 수 있습니다.
-    # 원본 논문에서는 positive 개수로 나누는 것을 제안합니다.
-    num_positives = gt_heatmap.eq(1).float().sum()
+def focal_loss(pred_heatmap, gt_heatmap, alpha=0.25, gamma=2.0, thresh=0.05):
+    focal_loss = sigmoid_focal_loss(inputs=pred_heatmap,targets=gt_heatmap,alpha=alpha,gamma=gamma,reduction='sum')
+    num_positives = (gt_heatmap > thresh).float().sum()
     if num_positives > 0:
         return focal_loss.sum() / num_positives
     else:
-        # Positive 샘플이 없는 경우의 예외 처리
         return focal_loss.sum()
-
 # def uncertainty_loss(logvar, sqr_dists):
 #     sqr_dists = sqr_dists.clamp(min=1.+1e-6)
 #     c = (1 + torch.log(sqr_dists)) / sqr_dists
