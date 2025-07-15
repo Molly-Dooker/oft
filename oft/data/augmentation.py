@@ -4,7 +4,7 @@ from PIL import ImageOps
 import torch
 from torch.utils.data import Dataset
 from .. import utils
-
+from torchvision import transforms
 
 def random_crop(image, calib, objects, output_size):
     
@@ -121,19 +121,19 @@ class AugmentedObjectDataset(Dataset):
         self.grid_size = grid_size
         self.scale_range = scale_range
         self.jitter = jitter
+        self.color_jitter = transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
     
     def __len__(self):
         return len(self.dataset)
     
     def __getitem__(self, index):
         idx, image, calib, objects, grid = self.dataset[index]
-
         # Apply image augmentation
         image, calib = random_scale(image, calib, self.scale_range)
         image, calib, objects = random_crop(
             image, calib, objects, self.image_size)
         image, calib, objects = random_flip(image, calib, objects)
-
+        image = self.color_jitter(image)
         # Augment grid
         grid = random_crop_grid(grid, objects, self.grid_size)
         # grid = random_jitter_grid(grid, self.jitter)

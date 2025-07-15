@@ -46,7 +46,6 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
         compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=heatmap_focal_loss,loss_weights=loss_weights)
     elif args.loss =='hm':
         compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=heatmap_loss,loss_weights=loss_weights)
-    t = time.time()    
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
         pred_encoded = model(image, calib, grid)
         gt_encoded = encoder.encode_batch(objects, grid)
@@ -71,17 +70,10 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
         accelerator.backward(loss)
         optimizer.step()
         if accelerator.is_main_process:
-            if i % args.print_iter == 0 and i != 0:
-                batch_time = (time.time() - t) / (1 if i == 0 else args.print_iter)
-                eta = ((args.epochs - epoch + 1) * len(dataloader) - i) * batch_time
-
-                s = '[{:4d}/{:4d}] batch_time: {:.2f}s eta: {:s} loss: '.format(
-                    i, len(dataloader), batch_time, 
-                    str(timedelta(seconds=int(eta))))
-                for k, v in loss_dict.items():
-                    s += '{}: {:.2e} '.format(k, v)
+            if i % args.print_iter == 0 and i != 0:     
+                s = f'[{i:4d}/{len(dataloader):4d}] '
+                for k, v in loss_dict.items(): s += f'{k}: {v:.2e} '
                 logger.bind(console_only=True).info(s)
-                t = time.time() 
     if accelerator.is_main_process:
         logger.info('==> Training complete')
         for key, value in epoch_loss.mean.items():
@@ -118,7 +110,7 @@ def validate(args, dataloader, model, encoder, epoch):
     if accelerator.is_main_process:
         logger.info('==> Validation complete')
         for key, value in epoch_loss.mean.items():
-            logger.info('{:8s}: {:.4e}'.format(key, value))
+            logger.info(f'{key:8s}: {value:.4e}')
 
 def compute_loss(pred_encoded, gt_encoded, loss_function, loss_weights=[1., 1., 1., 1.]):
     score, pos_offsets, dim_offsets, ang_offsets = pred_encoded
@@ -202,17 +194,17 @@ def parse_args():
                         help="loss function for heatmap: 'focal' or 'heatmap'")
     return parser.parse_args()
 
-def save_checkpoint(args, epoch, model, optimizer, scheduler):
-    model = model.module if isinstance(model, nn.DataParallel) else model
+def save_checkpoint(args, epoch, model, optimizer, scheduler):    
+    # accelerator를 통해 DDP/DataParallel 래핑을 해제하고 원본 모델을 가져옵니다.
+    unwrapped_model = accelerator.unwrap_model(model)    
     ckpt = {
         'epoch' : epoch,
-        'model' : model.state_dict(),
+        'model' : unwrapped_model.state_dict(), # Unwrapped 모델의 state_dict를 저장
         'optim' : optimizer.state_dict(),
         'scheduler' : scheduler.state_dict(),
     }
     ckpt_file = os.path.join(
         args.savedir, args.name, 'checkpoint-{:04d}.pth.gz'.format(epoch))
-
     logger.bind(console_only=True).info('==> Saving checkpoint \'{}\''.format(ckpt_file))
     torch.save(ckpt, ckpt_file)
 
@@ -258,7 +250,7 @@ def main(args):
         if epoch % args.val_interval == 0:            
             validate(args, val_loader, model, encoder, epoch)
             if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
-        scheduler.step(epoch-1)
+        scheduler.step()
 if __name__ == '__main__':
     args = parse_args()
     logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
