@@ -22,8 +22,8 @@ import sys
 import ipdb
 import oft
 from oft import OftNet, KittiObjectDataset, MetricDict, masked_l1_loss, heatmap_loss, ObjectEncoder, heatmap_focal_loss
-
-
+from accelerate import Accelerator
+accelerator = Accelerator()
 
 def logger_setup(prefix: str = '', logpath: str = './logs'):
     def console_filter(record):
