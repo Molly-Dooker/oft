@@ -9,6 +9,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 from loguru import logger
 import sys
+import yaml
 import ipdb
 import oft
 from oft import OftNet, KittiObjectDataset, MetricDict, masked_l1_loss, heatmap_loss, ObjectEncoder, heatmap_focal_loss
@@ -206,7 +207,15 @@ def save_checkpoint(args, epoch, model, optimizer, scheduler):
     torch.save(ckpt, ckpt_file)
 
 def main(args):
-    if accelerator.is_main_process: logger.bind(file_only=True).info(args)
+    if accelerator.is_main_process: 
+        logger.info("===== ACCELERATOR CONFIGURATION =====")
+        state_dict = {k: v for k, v in accelerator.state.__dict__.items() if not k.startswith('_')}
+        accel_config_str = yaml.dump(state_dict, default_flow_style=False)
+        logger.info(f"\n{accel_config_str}")        
+        logger.info("===== SCRIPT ARGUMENTS =====")
+        args_config_str = yaml.dump(args.__dict__, default_flow_style=False)
+        logger.info(f"\n{args_config_str}")
+        logger.info("===================================")
     args.lr = args.lr*accelerator.num_processes
     train_data = KittiObjectDataset(
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
