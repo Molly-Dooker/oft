@@ -1,17 +1,8 @@
 import os
 import time
-import yaml
-import math
-import numpy as np
-import matplotlib
-# matplotlib.use('Agg', warn=False)
-from matplotlib.backends.backend_agg import FigureCanvasAgg
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
-from datetime import datetime, timedelta
+from datetime import timedelta
 from argparse import ArgumentParser
-
-from collections import defaultdict
 import torch
 import torch.nn as nn
 from torch import optim
@@ -27,10 +18,8 @@ accelerator = Accelerator()
 def logger_setup(prefix: str = '', logpath: str = './logs'):
     def console_filter(record):
         return not record["extra"].get("file_only", False)
-
     logger.remove()
     LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {extra[prefix]} | {level} | {message}"
-
     logger.add(
         sys.stdout,
         level="INFO",
@@ -43,8 +32,6 @@ def logger_setup(prefix: str = '', logpath: str = './logs'):
         level="INFO",
         format=LOG_FORMAT
     )
-
-    # bind 한 뒤 리턴
     return logger.bind(prefix=prefix)
 
 def train(args, dataloader, model, encoder, optimizer, epoch):
@@ -54,41 +41,41 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
     epoch_loss = oft.MetricDict()
     t = time.time()    
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
-        
-
-        # Run network forwards
         pred_encoded = model(image, calib, grid)
-
-        # Encode ground truth objects
         gt_encoded = encoder.encode_batch(objects, grid)
-
-        # Compute losses
         loss, loss_dict = compute_loss(
             pred_encoded, gt_encoded, args.loss_weights)
-        if float(loss) != float(loss):
-            raise RuntimeError('Loss diverged :(')      
-        epoch_loss += loss_dict
-
+        if torch.isnan(loss): 
+            raise RuntimeError('Loss diverged :(')
+        gathered_total_loss = accelerator.gather(loss_dict['total'])
+        gathered_score_loss = accelerator.gather(loss_dict['score'])
+        gathered_pos_loss = accelerator.gather(loss_dict['position'])
+        gathered_dim_loss = accelerator.gather(loss_dict['dimension'])
+        gathered_ang_loss = accelerator.gather(loss_dict['angle'])
+        synced_loss_dict = {
+            'total': torch.mean(gathered_total_loss).item(),
+            'score': torch.mean(gathered_score_loss).item(),
+            'position': torch.mean(gathered_pos_loss).item(),
+            'dimension': torch.mean(gathered_dim_loss).item(),
+            'angle': torch.mean(gathered_ang_loss).item(),
+        }
+        epoch_loss += synced_loss_dict
         # Optimize
         optimizer.zero_grad()
         accelerator.backward(loss)
         optimizer.step()
-        # Print summary
-        if i % args.print_iter == 0 and i != 0:
-            batch_time = (time.time() - t) / (1 if i == 0 else args.print_iter)
-            eta = ((args.epochs - epoch + 1) * len(dataloader) - i) * batch_time
+        if accelerator.is_main_process:
+            if i % args.print_iter == 0 and i != 0:
+                batch_time = (time.time() - t) / (1 if i == 0 else args.print_iter)
+                eta = ((args.epochs - epoch + 1) * len(dataloader) - i) * batch_time
 
-            s = '[{:4d}/{:4d}] batch_time: {:.2f}s eta: {:s} loss: '.format(
-                i, len(dataloader), batch_time, 
-                str(timedelta(seconds=int(eta))))
-            for k, v in loss_dict.items():
-                s += '{}: {:.2e} '.format(k, v)
-            if accelerator.is_main_process:
+                s = '[{:4d}/{:4d}] batch_time: {:.2f}s eta: {:s} loss: '.format(
+                    i, len(dataloader), batch_time, 
+                    str(timedelta(seconds=int(eta))))
+                for k, v in loss_dict.items():
+                    s += '{}: {:.2e} '.format(k, v)
                 logger.info(s)
-            t = time.time()
-        
-
-    # Print epoch summary and save results
+                t = time.time() 
     if accelerator.is_main_process:
         logger.info('==> Training epoch complete')
         for key, value in epoch_loss.mean.items():
@@ -96,100 +83,55 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
 
 
 def validate(args, dataloader, model, encoder, epoch):
-    
-    logger.info('==> Validating on {} minibatches'.format(len(dataloader)))
+    if accelerator.is_main_process:
+        logger.info('==> Validating on {} minibatches'.format(len(dataloader)))
     model.eval()
     epoch_loss = MetricDict()
-
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
-
-        # Move tensors to GPU
-        # if len(args.gpu) > 0:
-        #     image, calib, grid = image.cuda(), calib.cuda(), grid.cuda()
-
         with torch.no_grad():
-
             # Run network forwards
             pred_encoded = model(image, calib, grid)
-
             # Encode ground truth objects
             gt_encoded = encoder.encode_batch(objects, grid)
-
-            # Compute losses
-            _, loss_dict = compute_loss(
-                pred_encoded, gt_encoded, args.loss_weights)       
-            epoch_loss += loss_dict
-        
-            # # Decode predictions
-            # preds = encoder.decode_batch(*pred_encoded, grid)
-        
-        
-
-    # TODO evaluate
+            _, loss_dict_tensors = compute_loss(
+                pred_encoded, gt_encoded, args.loss_weights)      
+            gathered_total = accelerator.gather(loss_dict_tensors['total'])
+            gathered_score = accelerator.gather(loss_dict_tensors['score'])
+            gathered_pos = accelerator.gather(loss_dict_tensors['position'])
+            gathered_dim = accelerator.gather(loss_dict_tensors['dimension'])
+            gathered_ang = accelerator.gather(loss_dict_tensors['angle'])
+            synced_loss_dict = {
+                'total': torch.mean(gathered_total).item(),
+                'score': torch.mean(gathered_score).item(),
+                'position': torch.mean(gathered_pos).item(),
+                'dimension': torch.mean(gathered_dim).item(),
+                'angle': torch.mean(gathered_ang).item(),
+            }
+            epoch_loss += synced_loss_dict       
     if accelerator.is_main_process:
         logger.info('==> Validation epoch complete')
         for key, value in epoch_loss.mean.items():
             logger.info('{:8s}: {:.4e}'.format(key, value))
 
-
 def compute_loss(pred_encoded, gt_encoded, loss_weights=[1., 1., 1., 1.]):
-
-    # Expand tuples
     score, pos_offsets, dim_offsets, ang_offsets = pred_encoded
     heatmaps, gt_pos_offsets, gt_dim_offsets, gt_ang_offsets, mask = gt_encoded
     score_weight, pos_weight, dim_weight, ang_weight = loss_weights
-
-    # Compute losses
     score_loss = heatmap_loss(score, heatmaps)
     pos_loss = masked_l1_loss(pos_offsets, gt_pos_offsets, mask.unsqueeze(2))
     dim_loss = masked_l1_loss(dim_offsets, gt_dim_offsets, mask.unsqueeze(2))
     ang_loss = masked_l1_loss(ang_offsets, gt_ang_offsets, mask.unsqueeze(2))
-
-    # Combine loss
     total_loss = score_loss * score_weight + pos_loss * pos_weight \
             + dim_loss * dim_weight + ang_loss * ang_weight
-    
-    # Store scalar losses in a dictionary
     loss_dict = {
-        'score' : float(score_loss), 'position' : float(pos_loss),
-        'dimension' : float(dim_loss), 'angle' : float(ang_loss),
-        'total' : float(total_loss) 
+        'score' : score_loss, 'position' : pos_loss,
+        'dimension' : dim_loss, 'angle' : ang_loss,
+        'total' : total_loss
     }
-
     return total_loss, loss_dict
-
-def visualize_image(image):
-    return image[0].cpu().detach()
-
-def visualize_score(scores, heatmaps, grid):
-
-    # Visualize score
-    fig_score = plt.figure(num='score', figsize=(8, 6))
-    fig_score.clear()
-
-    oft.vis_score(scores[0, 0], grid[0], ax=plt.subplot(121))
-    oft.vis_score(heatmaps[0, 0], grid[0], ax=plt.subplot(122))
-
-    return fig_score
-
-def visualise_bboxes(image, calib, objects, preds):
-
-    fig = plt.figure(num='bbox', figsize=(8, 6))
-    fig.clear()
-    ax1 = plt.subplot(211)
-    ax2 = plt.subplot(212)
-
-    oft.visualize_objects(image[0], calib[0], preds[0], ax=ax1)
-    ax1.set_title('Predictions')
-
-    oft.visualize_objects(image[0], calib[0], objects[0], ax=ax2)
-    ax2.set_title('Ground truth')
-
-    return fig
 
 def parse_args():
     parser = ArgumentParser()
-
     # Data options
     parser.add_argument('--root', type=str, default='data/kitti',
                         help='root directory of the KITTI dataset')
@@ -206,7 +148,6 @@ def parse_args():
                         help='size of random image crops during training')
     parser.add_argument('--yoffset', type=float, default=1.74,
                         help='vertical offset of the grid from the camera axis')
-    
     # Model options
     parser.add_argument('--grid-height', type=float, default=4.,
                         help='size of grid cells, in meters')
@@ -217,7 +158,6 @@ def parse_args():
                         help='name of frontend ResNet architecture')
     parser.add_argument('--topdown', type=int, default=8,
                         help='number of residual blocks in topdown network')
-    
     # Optimization options
     parser.add_argument('-l', '--lr', type=float, default=1e-9,
                         help='learning rate')
@@ -231,34 +171,26 @@ def parse_args():
                         default=[1., 1., 1., 1.],
                         help="loss weighting factors for score, position,"\
                             " dimension and angle loss respectively")
-
-
     # Training options
     parser.add_argument('-e', '--epochs', type=int, default=600,
                         help='number of epochs to train for')
     parser.add_argument('-b', '--batch-size', type=int, default=1,
                         help='mini-batch size for training')
-    
     # Experiment options
     parser.add_argument('name', type=str, default='test',
                         help='name of experiment')
     parser.add_argument('-s', '--savedir', type=str, 
                         default='experiments',
                         help='directory to save experiments to')
-    # parser.add_argument('-g', '--gpu', type=int, nargs='*', default=[0],
-    #                     help='ids of gpus to train on. Leave empty to use cpu')
     parser.add_argument('-w', '--workers', type=int, default=8,
                         help='number of worker threads to use for data loading')
     parser.add_argument('--val-interval', type=int, default=5,
                         help='number of epochs between validation runs')
     parser.add_argument('--print-iter', type=int, default=10,
                         help='print loss summary every N iterations')
-    # parser.add_argument('--vis-iter', type=int, default=50,
-    #                     help='display visualizations every N iterations')
     return parser.parse_args()
 
 def save_checkpoint(args, epoch, model, optimizer, scheduler):
-
     model = model.module if isinstance(model, nn.DataParallel) else model
     ckpt = {
         'epoch' : epoch,
@@ -282,24 +214,20 @@ def main(args):
         args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
     val_data = KittiObjectDataset(
         args.root, 'val', args.grid_size, args.grid_res, args.yoffset)
-    
     # Apply data augmentation
     train_data = oft.AugmentedObjectDataset(
         train_data, args.train_image_size, args.train_grid_size, 
         jitter=args.grid_jitter)
-
     # Create dataloaders
     train_loader = DataLoader(train_data, args.batch_size, shuffle=True, 
         num_workers=args.workers, collate_fn=oft.utils.collate)
     val_loader = DataLoader(val_data, args.batch_size, shuffle=False, 
         num_workers=args.workers,collate_fn=oft.utils.collate)
-
     # Build model
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
     encoder = ObjectEncoder()
-
     # Setup optimizer
     optimizer = optim.SGD(
         model.parameters(), args.lr, args.momentum, args.weight_decay)
@@ -308,8 +236,6 @@ def main(args):
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, val_loader, scheduler
     )
-
-
     for epoch in range(1, args.epochs+1):
         if accelerator.is_main_process:
             logger.info('=== Beginning epoch {} of {} ==='.format(epoch, args.epochs))        
@@ -323,11 +249,7 @@ def main(args):
             # Save model checkpoint
             if accelerator.is_main_process:
                 save_checkpoint(args, epoch, model, optimizer, scheduler)
-
 if __name__ == '__main__':
     args = parse_args()
     logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
     main(args)
-
-            
-
