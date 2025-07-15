@@ -12,7 +12,7 @@ import sys
 import yaml
 import ipdb
 import oft
-from oft import OftNet, KittiObjectDataset, MetricDict, masked_l1_loss, heatmap_loss, ObjectEncoder, heatmap_focal_loss
+from oft import OftNet, KittiObjectDataset, MetricDict, masked_l1_loss, heatmap_loss, ObjectEncoder, focal_loss
 from accelerate import Accelerator
 accelerator = Accelerator()
 
@@ -43,7 +43,7 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
     model.train()
     epoch_loss = oft.MetricDict()
     if args.loss == 'focal': 
-        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=heatmap_focal_loss,loss_weights=loss_weights)
+        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=focal_loss,loss_weights=loss_weights)
     elif args.loss =='hm':
         compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=heatmap_loss,loss_weights=loss_weights)
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
@@ -84,7 +84,7 @@ def validate(args, dataloader, model, encoder, epoch):
     model.eval()
     epoch_loss = MetricDict()
     if args.loss == 'focal': 
-        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded, gt_encoded=gt_encoded, loss_function=heatmap_focal_loss, loss_weights=loss_weights)
+        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded, gt_encoded=gt_encoded, loss_function=focal_loss, loss_weights=loss_weights)
     elif args.loss =='hm':
         compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded, gt_encoded=gt_encoded, loss_function=heatmap_loss, loss_weights=loss_weights)
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):

@@ -1,2 +1,2 @@
 from .oftnet import OftNet
-from .loss import huber_loss, masked_l1_loss, heatmap_loss, heatmap_focal_loss
+from .loss import huber_loss, masked_l1_loss, heatmap_loss, focal_loss

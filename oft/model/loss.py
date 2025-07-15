@@ -70,7 +70,7 @@ def heatmap_loss(heatmap, gt_heatmap, weights=[100], thresh=0.05):
     loss *= positives * weights + (1 - positives)
     return loss.sum()
 
-def heatmap_focal_loss(pred_heatmap, gt_heatmap, alpha=0.25, gamma=2.0):
+def focal_loss(pred_heatmap, gt_heatmap, alpha=0.25, gamma=2.0):
     """
     Focal loss for heatmaps.
     
