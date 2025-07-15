@@ -52,7 +52,7 @@ def main():
 
     # 데이터셋 로드
     dataset = KittiObjectDataset(
-        args.root, 'val', args.grid_size, args.grid_res, args.yoffset)
+        args.root, 'test', args.grid_size, args.grid_res, args.yoffset)
     
     # 모델 생성 및 로드
     model = OftNet(num_classes=1,

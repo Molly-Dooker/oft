@@ -20,6 +20,7 @@ class KittiObjectDataset(Dataset):
         # ipdb.set_trace()
         kitti_split = 'testing' if split == 'test' else 'training'
         self.root = os.path.join(kitti_root, 'object', kitti_split)
+        ipdb.set_trace()
 
         # Read split indices from file
         split_file = os.path.dirname(__file__) + '/splits/{}.txt'.format(split)
