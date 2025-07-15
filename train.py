@@ -166,8 +166,10 @@ def parse_args():
     parser.add_argument('--topdown', type=int, default=8,
                         help='number of residual blocks in topdown network')
     # Optimization options
-    parser.add_argument('-l', '--lr', type=float, default=1e-9,
+    parser.add_argument('-l', '--lr', type=float, default=1e-4,
                         help='learning rate')
+    parser.add_argument('--warm', type=int, default=5,
+                        help='warmup epochs')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum for SGD')
     parser.add_argument('--weight-decay', type=float, default=1e-4,
@@ -240,9 +242,13 @@ def main(args):
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
     encoder = ObjectEncoder()
-    optimizer = optim.SGD(
-        model.parameters(), args.lr, args.momentum, args.weight_decay)
-    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, args.lr_decay)
+    # optimizer = optim.SGD(model.parameters(), args.lr, args.momentum, args.weight_decay)
+    # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, args.lr_decay)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    main_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - args.warm, eta_min=0)
+    warmup_scheduler = optim.lr_scheduler.LinearLR( optimizer, start_factor=0.1, total_iters=args.warm)
+    scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[args.warm])   
+
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, val_loader, scheduler
     )
