@@ -167,7 +167,7 @@ def parse_args():
     # Training options
     parser.add_argument('-e', '--epochs', type=int, default=600,
                         help='number of epochs to train for')
-    parser.add_argument('-b', '--batch-size', type=int, default=1,
+    parser.add_argument('-b', '--batch-size', type=int, default=16,
                         help='mini-batch size for training')
     # Experiment options
     parser.add_argument('name', type=str, default='test',
@@ -237,8 +237,8 @@ def main(args):
     for epoch in range(1, args.epochs+1):
         if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')
         train(args, train_loader, model, encoder, optimizer, epoch)
-        
-        if epoch % args.val_interval == 0:            
+        if epoch % args.val_interval == 0:
+            optimizer.zero_grad()
             if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
             validate(args, val_loader, model, encoder, epoch)
         scheduler.step()
