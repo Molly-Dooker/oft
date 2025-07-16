@@ -130,8 +130,7 @@ class AugmentedObjectDataset(Dataset):
         idx, image, calib, objects, grid = self.dataset[index]
         # Apply image augmentation
         image, calib = random_scale(image, calib, self.scale_range)
-        image, calib, objects = random_crop(
-            image, calib, objects, self.image_size)
+        image, calib, objects = random_crop(image, calib, objects, self.image_size)
         image, calib, objects = random_flip(image, calib, objects)
         image = self.color_jitter(image)
         # Augment grid
