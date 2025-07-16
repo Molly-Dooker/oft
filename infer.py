@@ -1,7 +1,7 @@
 import os
 import time
 import torch
-from torchvision.transforms.functional import to_tensor 
+from torchvision.transforms.functional import to_tensor, hflip
 from argparse import ArgumentParser
 
 import matplotlib
@@ -71,32 +71,41 @@ def main():
     # 디코더 생성
     encoder = ObjectEncoder(nms_thresh=args.nms_thresh)
 
-    # figure 한 번만 생성
-    fig, (ax1, ax2) = plt.subplots(nrows=2, figsize=(8, 12))
+    # figure 생성: 원본 Det / GT / Flipped Det
+    fig, (ax1, ax2, ax3) = plt.subplots(nrows=3, figsize=(8, 16))
 
     # 반복하면서 각 프레임 저장
     for idx, (_, image, calib, objects, grid) in enumerate(tqdm(dataset, desc='Inference')):
         # 이미지 전처리
-        
         image_tensor = to_tensor(image)
         if args.gpu >= 0:
             image_tensor = image_tensor.cuda()
             calib = calib.cuda()
             grid = grid.cuda()
 
-        # 추론
+        # 원본 이미지 추론 및 디코딩
         with torch.no_grad():
             pred_encoded = model(image_tensor[None], calib[None], grid[None])
-
-        # CPU로 옮기고 디코딩
         pred_encoded = [t[0].cpu() for t in pred_encoded]
         detections = encoder.decode(*pred_encoded, grid.cpu())
 
-        # 시각화
+        # 시각화: 원본 검출 vs GT
         visualize_objects(image_tensor, calib, detections, ax=ax1)
         ax1.set_title('Detections')
-        visualize_objects(image_tensor, calib, objects,   ax=ax2)
-        ax2.set_title('Ground truth')
+        visualize_objects(image_tensor, calib, objects,   ax=ax3)
+        ax3.set_title('Ground truth')
+
+        # 좌우 반전된 이미지에 대해 다시 inference & 시각화
+        image_tensor_flip = hflip(image_tensor.cpu())
+        if args.gpu >= 0:
+            image_tensor_flip = image_tensor_flip.cuda()
+        with torch.no_grad():
+            pred_enc_flip = model(image_tensor_flip[None], calib[None], grid[None])
+        pred_enc_flip = [t[0].cpu() for t in pred_enc_flip]
+        det_flip = encoder.decode(*pred_enc_flip, grid.cpu())
+
+        visualize_objects(image_tensor_flip.cpu(), calib, det_flip, ax=ax2)
+        ax2.set_title('Flipped Detections')
 
         # 파일로 저장
         save_path = os.path.join(out_dir, f'frame_{idx:04d}.png')
@@ -106,6 +115,7 @@ def main():
         # 다음 루프를 위해 축 내용 지우기
         ax1.clear()
         ax2.clear()
+        ax3.clear()
 
     plt.close(fig)
 
