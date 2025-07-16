@@ -63,10 +63,10 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
         accelerator.backward(loss)
         optimizer.step()
         if accelerator.is_main_process:
-            if i % args.print_iter == 0 and i != 0:     
-                s = f'[{i:4d}/{len(dataloader):4d}] '
-                for k, v in loss_dict.items(): s += f'{k}: {v:.2e} '
-                logger.bind(console_only=True).info(s)
+            # if i % args.print_iter == 0 and i != 0:     
+            s = f'[{i:4d}/{len(dataloader):4d}] '
+            for k, v in loss_dict.items(): s += f'{k}: {v:.2e} '
+            logger.bind(console_only=True).info(s)
     if accelerator.is_main_process:
         logger.info('==> Training complete')
         for key, value in epoch_loss.mean.items():
