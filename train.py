@@ -132,7 +132,7 @@ def parse_args():
                         default=[.25, .5, .25],
                         help='magn. of random noise applied to grid coords')
     parser.add_argument('-ts','--train-image-size', type=int, nargs=2, 
-                        default=(1080, 360),
+                        default=(1080, 360), # 1224 370
                         help='size of random image crops during training')
     parser.add_argument('--yoffset', type=float, default=1.74,
                         help='vertical offset of the grid from the camera axis')
@@ -214,7 +214,6 @@ def main(args):
         jitter=args.grid_jitter)
     train_loader = DataLoader(train_data, args.batch_size, shuffle=True, collate_fn=oft.utils.collate, num_workers=args.workers)
     val_loader   = DataLoader(val_data, args.batch_size, shuffle=False, collate_fn=oft.utils.collate, num_workers=args.workers)
-    ipdb.set_trace()
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
