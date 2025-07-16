@@ -5,7 +5,8 @@ import torch
 from torch.utils.data import Dataset
 from .. import utils
 from torchvision import transforms
-
+from accelerate import Accelerator
+accel = Accelerator()
 def random_crop(image, calib, objects, output_size):
     
     # Randomize bounding box coordinates
@@ -129,6 +130,7 @@ class AugmentedObjectDataset(Dataset):
     def __getitem__(self, index):
         idx, image, calib, objects, grid = self.dataset[index]
         # Apply image augmentation
+        import ipdb; ipdb.set_trace()
         image, calib = random_scale(image, calib, self.scale_range)
         image, calib, objects = random_crop(image, calib, objects, self.image_size)
         image, calib, objects = random_flip(image, calib, objects)
