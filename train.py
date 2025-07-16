@@ -42,14 +42,10 @@ def train(args, dataloader, model, encoder, optimizer, epoch):
     if accelerator.is_main_process: logger.bind(console_only=True).info('==> Training on {} minibatches'.format(len(dataloader)))
     model.train()
     epoch_loss = oft.MetricDict()
-    if args.loss == 'focal': 
-        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=focal_loss,loss_weights=loss_weights)
-    elif args.loss =='hm':
-        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded,gt_encoded=gt_encoded,loss_function=heatmap_loss,loss_weights=loss_weights)
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
         pred_encoded = model(image, calib, grid)
         gt_encoded = encoder.encode_batch(objects, grid)
-        loss, loss_dict = compute_loss_(pred_encoded, gt_encoded,args.loss_weights)
+        loss, loss_dict = compute_loss(pred_encoded, gt_encoded, args.loss_weights)
         if torch.isnan(loss): 
             raise RuntimeError('Loss diverged :(')
         gathered_total_loss = accelerator.gather(loss_dict['total'])
@@ -83,17 +79,13 @@ def validate(args, dataloader, model, encoder, epoch):
     if accelerator.is_main_process: logger.bind(console_only=True).info('==> Validating on {} minibatches'.format(len(dataloader)))
     model.eval()
     epoch_loss = MetricDict()
-    if args.loss == 'focal': 
-        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded, gt_encoded=gt_encoded, loss_function=focal_loss, loss_weights=loss_weights)
-    elif args.loss =='hm':
-        compute_loss_ = lambda pred_encoded, gt_encoded, loss_weights : compute_loss(pred_encoded=pred_encoded, gt_encoded=gt_encoded, loss_function=heatmap_loss, loss_weights=loss_weights)
     for i, (_, image, calib, objects, grid) in enumerate(dataloader):
         with torch.no_grad():
             # Run network forwards
             pred_encoded = model(image, calib, grid)
             # Encode ground truth objects
             gt_encoded = encoder.encode_batch(objects, grid)
-            _, loss_dict_tensors = compute_loss_(pred_encoded, gt_encoded, args.loss_weights)      
+            _, loss_dict_tensors = compute_loss(pred_encoded, gt_encoded, args.loss_weights)      
             gathered_total = accelerator.gather(loss_dict_tensors['total'])
             gathered_score = accelerator.gather(loss_dict_tensors['score'])
             gathered_pos = accelerator.gather(loss_dict_tensors['position'])
@@ -112,11 +104,11 @@ def validate(args, dataloader, model, encoder, epoch):
         for key, value in epoch_loss.mean.items():
             logger.info(f'{key:8s}: {value:.4e}')
 
-def compute_loss(pred_encoded, gt_encoded, loss_function, loss_weights=[1., 1., 1., 1.]):
+def compute_loss(pred_encoded, gt_encoded, loss_weights=[1., 1., 1., 1.]):
     score, pos_offsets, dim_offsets, ang_offsets = pred_encoded
     heatmaps, gt_pos_offsets, gt_dim_offsets, gt_ang_offsets, mask = gt_encoded
     score_weight, pos_weight, dim_weight, ang_weight = loss_weights
-    score_loss = loss_function(score, heatmaps)
+    score_loss = heatmap_loss(score, heatmaps)
     pos_loss = masked_l1_loss(pos_offsets, gt_pos_offsets, mask.unsqueeze(2))
     dim_loss = masked_l1_loss(dim_offsets, gt_dim_offsets, mask.unsqueeze(2))
     ang_loss = masked_l1_loss(ang_offsets, gt_ang_offsets, mask.unsqueeze(2))
@@ -142,7 +134,7 @@ def parse_args():
     parser.add_argument('--grid-jitter', type=float, nargs=3, 
                         default=[.25, .5, .25],
                         help='magn. of random noise applied to grid coords')
-    parser.add_argument('--train-image-size', type=int, nargs=2, 
+    parser.add_argument('-ts','--train-image-size', type=int, nargs=2, 
                         default=(1080, 360),
                         help='size of random image crops during training')
     parser.add_argument('--yoffset', type=float, default=1.74,
@@ -173,7 +165,7 @@ def parse_args():
                         help="loss weighting factors for score, position,"\
                             " dimension and angle loss respectively")
     # Training options
-    parser.add_argument('-e', '--epochs', type=int, default=300,
+    parser.add_argument('-e', '--epochs', type=int, default=600,
                         help='number of epochs to train for')
     parser.add_argument('-b', '--batch-size', type=int, default=1,
                         help='mini-batch size for training')
@@ -228,6 +220,7 @@ def main(args):
         jitter=args.grid_jitter)
     train_loader = DataLoader(train_data, args.batch_size, shuffle=True, collate_fn=oft.utils.collate, num_workers=args.workers)
     val_loader   = DataLoader(val_data, args.batch_size, shuffle=False, collate_fn=oft.utils.collate, num_workers=args.workers)
+    # ipdb.set_trace()
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
