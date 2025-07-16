@@ -1,7 +1,4 @@
 import os
-import time
-import matplotlib.pyplot as plt
-from datetime import timedelta
 from argparse import ArgumentParser
 import torch
 import torch.nn as nn
@@ -181,9 +178,6 @@ def parse_args():
                         help='number of epochs between validation runs')
     parser.add_argument('--print-iter', type=int, default=10,
                         help='print loss summary every N iterations')
-    parser.add_argument('--loss', type=str, default='hm',
-                        choices=['focal', 'hm'],
-                        help="loss function for heatmap: 'focal' or 'heatmap'")
     return parser.parse_args()
 
 def save_checkpoint(args, epoch, model, optimizer, scheduler):    
@@ -220,7 +214,7 @@ def main(args):
         jitter=args.grid_jitter)
     train_loader = DataLoader(train_data, args.batch_size, shuffle=True, collate_fn=oft.utils.collate, num_workers=args.workers)
     val_loader   = DataLoader(val_data, args.batch_size, shuffle=False, collate_fn=oft.utils.collate, num_workers=args.workers)
-    # ipdb.set_trace()
+    ipdb.set_trace()
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
