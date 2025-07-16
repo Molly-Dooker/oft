@@ -5,6 +5,10 @@ import torch
 from torch.utils.data import Dataset
 from .. import utils
 from torchvision import transforms
+import ipdb
+import albumentations as A # Albumentations 임포트
+from albumentations.pytorch import ToTensorV2 # Albumentations의 텐서 변환기
+import numpy as np
 def random_crop(image, calib, objects, output_size):
     # Randomize bounding box coordinates
     width, height = image.size
@@ -95,7 +99,13 @@ class AugmentedObjectDataset(Dataset):
         self.grid_size = grid_size
         self.scale_range = scale_range
         self.jitter = jitter
-        self.color_jitter = transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1)    
+        self.color_jitter   = transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05, hue=0.05)
+        # self.random_erasing = transforms.RandomErasing(p=0.5, scale=(0.1, 0.2), ratio=(0.1, 3.3))
+        self.dropout = A.Compose([
+            A.CoarseDropout(num_holes_range=(1,2),
+                            hole_height_range=(0.1,0.15),
+                            hole_width_range=(0.1,0.15)),
+                            ToTensorV2()])
     def __len__(self):
         return len(self.dataset)    
     def __getitem__(self, index):
@@ -105,6 +115,9 @@ class AugmentedObjectDataset(Dataset):
         image, calib, objects = random_crop(image, calib, objects, self.image_size)
         image, calib, objects = random_flip(image, calib, objects)
         image = self.color_jitter(image)
+        image = self.dropout(image=np.array(image))['image']
+        image = transforms.ToPILImage()(image)
+        # image = transforms.ToPILImage()(image)
         # Augment grid
         grid = random_crop_grid(grid, objects, self.grid_size)
         # grid = random_jitter_grid(grid, self.jitter)
