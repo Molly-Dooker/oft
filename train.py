@@ -226,10 +226,8 @@ def main(args):
     train_data = oft.AugmentedObjectDataset(
         train_data, args.train_image_size, args.train_grid_size, 
         jitter=args.grid_jitter)
-    train_loader = DataLoader(train_data, args.batch_size, shuffle=True, 
-        num_workers=args.workers, collate_fn=oft.utils.collate)
-    val_loader = DataLoader(val_data, args.batch_size, shuffle=False, 
-        num_workers=args.workers,collate_fn=oft.utils.collate)
+    train_loader = DataLoader(train_data, args.batch_size, shuffle=True, collate_fn=oft.utils.collate, num_workers=args.workers)
+    val_loader   = DataLoader(val_data, args.batch_size, shuffle=False, collate_fn=oft.utils.collate, num_workers=args.workers)
     model = OftNet(num_classes=1, frontend=args.frontend, 
                    topdown_layers=args.topdown, grid_res=args.grid_res, 
                    grid_height=args.grid_height)
@@ -240,7 +238,6 @@ def main(args):
     main_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - args.warm, eta_min=0)
     warmup_scheduler = optim.lr_scheduler.LinearLR( optimizer, start_factor=0.1, total_iters=args.warm)
     scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[args.warm])   
-
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, val_loader, scheduler
     )
