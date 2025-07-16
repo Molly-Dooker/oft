@@ -210,7 +210,7 @@ class ObjectEncoder(object):
 
 
 
-def non_maximum_suppression(heatmaps, sigma=1.0, thresh=0.5, max_peaks=10):
+def non_maximum_suppression(heatmaps, sigma=1.0, thresh=0.4, max_peaks=50):
     
     # Smooth with a Gaussian kernel
     num_class = heatmaps.size(0)

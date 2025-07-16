@@ -173,7 +173,7 @@ def parse_args():
                         help="loss weighting factors for score, position,"\
                             " dimension and angle loss respectively")
     # Training options
-    parser.add_argument('-e', '--epochs', type=int, default=600,
+    parser.add_argument('-e', '--epochs', type=int, default=300,
                         help='number of epochs to train for')
     parser.add_argument('-b', '--batch-size', type=int, default=1,
                         help='mini-batch size for training')
