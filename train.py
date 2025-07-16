@@ -244,8 +244,9 @@ def main(args):
     for epoch in range(1, args.epochs+1):
         if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')
         train(args, train_loader, model, encoder, optimizer, epoch)
-        if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
+        
         if epoch % args.val_interval == 0:            
+            if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
             validate(args, val_loader, model, encoder, epoch)
         scheduler.step()
 if __name__ == '__main__':
