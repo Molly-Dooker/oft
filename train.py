@@ -1,7 +1,7 @@
 import os
 from argparse import ArgumentParser
 import torch
-import torch.nn as nn
+from cosine_annealing_warmup import CosineAnnealingWarmupRestarts
 from torch import optim
 from torch.utils.data import DataLoader
 from loguru import logger
@@ -164,8 +164,10 @@ def parse_args():
     # Training options
     parser.add_argument('-e', '--epochs', type=int, default=600,
                         help='number of epochs to train for')
-    parser.add_argument('-b', '--batch-size', type=int, default=16,
+    parser.add_argument('-b', '--batch-size', type=int, default=8,
                         help='mini-batch size for training')
+    parser.add_argument('-ls', '--lr-scheduler', choices=['cs', 'cswr'], default='cs',
+                        help='cs:CosineAnnealing, cswr:CosineAnnealingWarmRestarts')
     # Experiment options
     parser.add_argument('name', type=str, default='test',
                         help='name of experiment')
@@ -221,9 +223,13 @@ def main(args):
     # optimizer = optim.SGD(model.parameters(), args.lr, args.momentum, args.weight_decay)
     # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, args.lr_decay)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    main_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - args.warm, eta_min=0)
-    warmup_scheduler = optim.lr_scheduler.LinearLR( optimizer, start_factor=0.1, total_iters=args.warm)
-    scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[args.warm])   
+
+    if args.lr_scheduler=='cs':
+        main_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - args.warm, eta_min=0)
+        warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=args.warm)
+        scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[args.warm])
+    elif args.lr_scheduler=='cswr':
+        scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=50, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-9, warmup_steps=args.warm, gamma=0.5)    
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, val_loader, scheduler
     )
