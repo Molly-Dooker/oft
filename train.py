@@ -149,7 +149,7 @@ def parse_args():
     # Optimization options
     parser.add_argument('-l', '--lr', type=float, default=1e-5,
                         help='learning rate')
-    parser.add_argument('--warm', type=int, default=5,
+    parser.add_argument('--warm', type=int, default=10,
                         help='warmup epochs')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum for SGD')
