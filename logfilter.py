@@ -2,25 +2,22 @@ import re
 import csv
 import os
 from argparse import ArgumentParser
+import pandas as pd
+import matplotlib.pyplot as plt
+try:
+    plt.rcParams['font.family'] = 'Malgun Gothic'
+    plt.rcParams['axes.unicode_minus'] = False
+except Exception as e:
+    print(f"폰트 설정 중 오류 발생: {e}. 기본 폰트로 진행합니다.")
 
 def parse_log_to_csv(log_file_path, output_dir):
-    """
-    주어진 로그 파일을 파싱하여 지정된 디렉터리에 train/validation 결과를 CSV로 저장합니다.
-    """
-    # 1. 결과 저장 디렉토리 생성 (없을 경우)
-    # exist_ok=True 옵션은 디렉토리가 이미 존재해도 오류를 발생시키지 않습니다.
     os.makedirs(output_dir, exist_ok=True)
-
-    # 2. 결과 CSV 파일의 전체 경로 설정
-    # os.path.join을 사용하면 OS에 맞는 경로 구분자로 안전하게 경로를 합칠 수 있습니다.
     train_csv_path = os.path.join(output_dir, 'train.csv')
     val_csv_path = os.path.join(output_dir, 'validation.csv')
 
-    # 데이터를 저장할 리스트 초기화
     train_data = []
     validation_data = []
 
-    # 에포크 번호를 추출하기 위한 정규 표현식
     epoch_pattern = re.compile(r'=== epoch (\d+) of \d+ ===')
 
     try:
@@ -85,6 +82,59 @@ def parse_log_to_csv(log_file_path, output_dir):
             writer.writerows(validation_data)
         print(f"✅ 검증 결과가 '{val_csv_path}' 파일에 성공적으로 저장되었습니다.")
 
+def find_col(df, name):
+    for col in df.columns:
+        if col.strip().lower() == name.lower():
+            return col
+    return None
+
+def save_plot(df:pd.DataFrame, title:str, output_dir:str):
+    try:
+        plt.rcParams['font.family'] = 'Malgun Gothic'
+        plt.rcParams['axes.unicode_minus'] = False
+    except:
+        print("알림: 'Malgun Gothic' 폰트를 찾을 수 없어 기본 폰트로 설정합니다.")    
+    epoch_col = find_col(df, 'epoch')
+    x_axis = df[epoch_col] if epoch_col else df.index
+    score_col = find_col(df, 'score')
+    total_col = find_col(df, 'total')
+    other_columns = [
+        col for col in df.columns 
+        if col not in [epoch_col, score_col, total_col]
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.flatten()    
+    current_ax_idx = 0
+    if score_col or total_col:
+        ax = axes[current_ax_idx]
+        if score_col:
+            ax.plot(x_axis, df[score_col], marker='o', linestyle='-', label=score_col)
+        if total_col:
+            ax.plot(x_axis, df[total_col], marker='s', linestyle='--', label=total_col)        
+        ax.set_title('Score & Total per Epoch')
+        ax.set_xlabel('Epoch' if epoch_col else 'Index')
+        ax.set_ylabel('Value')
+        ax.legend()
+        ax.grid(True)
+        current_ax_idx += 1
+    for col in other_columns:
+        if current_ax_idx < len(axes):
+            ax = axes[current_ax_idx]
+            ax.plot(x_axis, df[col], marker='o', linestyle='-', label=col)
+            ax.set_title(f'{col} per Epoch')
+            ax.set_xlabel('Epoch' if epoch_col else 'Index')
+            ax.set_ylabel(col)
+            ax.legend()
+            ax.grid(True)
+            current_ax_idx += 1
+    for i in range(current_ax_idx, len(axes)):
+        fig.delaxes(axes[i])
+    fig.suptitle(f'{title} Results Visualization', fontsize=16)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    filename = os.path.join(output_dir,f'{title}.png')
+    plt.savefig(filename, dpi=300)
+    plt.close(fig)
+    print(f"✅ 그래프가 '{filename}' 파일로 성공적으로 저장되었습니다.")
 
 if __name__ == '__main__':
     parser = ArgumentParser(description="로그 파일을 파싱하여 Train/Validation 결과를 CSV로 저장합니다.")
@@ -97,3 +147,11 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     parse_log_to_csv(args.logpath, args.output_dir)
+    
+    train_df = pd.read_csv(os.path.join(args.output_dir, 'train.csv'))
+    valid_df = pd.read_csv(os.path.join(args.output_dir, 'validation.csv'))
+    train_df.columns = train_df.columns.str.strip()
+    valid_df.columns = valid_df.columns.str.strip()
+    
+    save_plot(train_df,'Training',args.output_dir)
+    save_plot(valid_df,'Validation',args.output_dir)
