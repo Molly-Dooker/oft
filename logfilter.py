@@ -13,8 +13,8 @@ def parse_log_to_csv(log_file_path, output_dir):
 
     # 2. 결과 CSV 파일의 전체 경로 설정
     # os.path.join을 사용하면 OS에 맞는 경로 구분자로 안전하게 경로를 합칠 수 있습니다.
-    train_csv_path = os.path.join(output_dir, 'train_results.csv')
-    val_csv_path = os.path.join(output_dir, 'validation_results.csv')
+    train_csv_path = os.path.join(output_dir, 'train.csv')
+    val_csv_path = os.path.join(output_dir, 'validation.csv')
 
     # 데이터를 저장할 리스트 초기화
     train_data = []
