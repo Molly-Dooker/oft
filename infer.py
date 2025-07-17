@@ -1,11 +1,8 @@
 import os
-import time
 import torch
-from torchvision.transforms.functional import to_tensor, hflip
+from torchvision.transforms.functional import to_tensor
 from argparse import ArgumentParser
-
 import matplotlib
-# GUI 창 없이 파일로만 저장 가능하도록 Agg 백엔드 사용
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import ipdb
@@ -14,12 +11,10 @@ from oft import KittiObjectDataset, OftNet, ObjectEncoder, visualize_objects
 
 def parse_args():
     parser = ArgumentParser()
-
     parser.add_argument('modelpath', type=str,
                         help='path to checkpoint file containing trained model')
     parser.add_argument('-g', '--gpu', type=int, default=0,
-                        help='gpu to use for inference (-1 for cpu)')
-    
+                        help='gpu to use for inference (-1 for cpu)')    
     # Data options
     parser.add_argument('--root', type=str, default='data/kitti',
                         help='root directory of the KITTI dataset')
@@ -29,7 +24,6 @@ def parse_args():
                         help='vertical offset of the grid from the camera axis')
     parser.add_argument('--nms-thresh', type=float, default=0.2,
                         help='minimum score for a positive detection')
-
     # Model options
     parser.add_argument('--grid-height', type=float, default=4.,
                         help='size of grid cells, in meters')
@@ -39,21 +33,17 @@ def parse_args():
                         choices=['resnet18', 'resnet34'],
                         help='name of frontend ResNet architecture')
     parser.add_argument('--topdown', type=int, default=8,
-                        help='number of residual blocks in topdown network')
-    
+                        help='number of residual blocks in topdown network')    
     return parser.parse_args()
-
 
 def main():
     args = parse_args()
-    # 출력 디렉터리 준비
     out_dir = args.modelpath[:-7]
-    os.makedirs(out_dir, exist_ok=True)
-
-    # 데이터셋 로드
-    dataset = KittiObjectDataset(
-        args.root, 'trainval', args.grid_size, args.grid_res, args.yoffset)
-    
+    valid_dir = os.path.join(out_dir,'valid')
+    train_dir = os.path.join(out_dir,'train')
+    os.makedirs(valid_dir, exist_ok=True)
+    os.makedirs(train_dir, exist_ok=True)
+    valid_dataset = KittiObjectDataset(args.root, 'val', args.grid_size, args.grid_res, args.yoffset)
     # 모델 생성 및 로드
     model = OftNet(num_classes=1,
                    frontend=args.frontend,
@@ -63,62 +53,51 @@ def main():
     if args.gpu >= 0:
         torch.cuda.set_device(args.gpu)
         model.cuda()
-
     ckpt = torch.load(args.modelpath, map_location='cpu')
     model.load_state_dict(ckpt['model'])
     model.eval()
-
-    # 디코더 생성
     encoder = ObjectEncoder(nms_thresh=args.nms_thresh)
-
-    # figure 생성: 원본 Det / GT / Flipped Det
-    fig, (ax1, ax2, ax3) = plt.subplots(nrows=3, figsize=(8, 16))
-
-    # 반복하면서 각 프레임 저장
-    for idx, (_, image, calib, objects, grid) in enumerate(tqdm(dataset, desc='Inference')):
-        # 이미지 전처리
+    fig, (ax_det, ax_gt) = plt.subplots(nrows=2, figsize=(8, 12))
+    for idx, image, calib, objects, grid in tqdm(valid_dataset, desc='Validation'):
         image_tensor = to_tensor(image)
         if args.gpu >= 0:
             image_tensor = image_tensor.cuda()
             calib = calib.cuda()
             grid = grid.cuda()
-
-        # 원본 이미지 추론 및 디코딩
         with torch.no_grad():
             pred_encoded = model(image_tensor[None], calib[None], grid[None])
         pred_encoded = [t[0].cpu() for t in pred_encoded]
         detections = encoder.decode(*pred_encoded, grid.cpu())
-
-        # 시각화: 원본 검출 vs GT
-        visualize_objects(image_tensor, calib, detections, ax=ax1)
-        ax1.set_title('Detections')
-        visualize_objects(image_tensor, calib, objects,   ax=ax3)
-        ax3.set_title('Ground truth')
-
-        # 좌우 반전된 이미지에 대해 다시 inference & 시각화
-        image_tensor_flip = hflip(image_tensor.cpu())
-        if args.gpu >= 0:
-            image_tensor_flip = image_tensor_flip.cuda()
-        with torch.no_grad():
-            pred_enc_flip = model(image_tensor_flip[None], calib[None], grid[None])
-        pred_enc_flip = [t[0].cpu() for t in pred_enc_flip]
-        det_flip = encoder.decode(*pred_enc_flip, grid.cpu())
-
-        visualize_objects(image_tensor_flip.cpu(), calib, det_flip, ax=ax2)
-        ax2.set_title('Flipped Detections')
-
-        # 파일로 저장
-        save_path = os.path.join(out_dir, f'frame_{idx:04d}.png')
+        visualize_objects(image_tensor, calib, detections, ax=ax_det)
+        ax_det.set_title('Detections')
+        visualize_objects(image_tensor, calib, objects, ax=ax_gt)
+        ax_gt.set_title('Ground truth')
+        save_path = os.path.join(valid_dir, f'frame_{idx:04d}.png')
         fig.savefig(save_path, bbox_inches='tight')
         print(f'Saved {save_path}')
-
-        # 다음 루프를 위해 축 내용 지우기
-        ax1.clear()
-        ax2.clear()
-        ax3.clear()
-
+        ax_det.clear()
+        ax_gt.clear()
+    train_dataset = KittiObjectDataset(args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
+    for idx, image, calib, objects, grid in tqdm(train_dataset, desc='Train'):
+        image_tensor = to_tensor(image)
+        if args.gpu >= 0:
+            image_tensor = image_tensor.cuda()
+            calib = calib.cuda()
+            grid = grid.cuda()
+        with torch.no_grad():
+            pred_encoded = model(image_tensor[None], calib[None], grid[None])
+        pred_encoded = [t[0].cpu() for t in pred_encoded]
+        detections = encoder.decode(*pred_encoded, grid.cpu())
+        visualize_objects(image_tensor, calib, detections, ax=ax_det)
+        ax_det.set_title('Detections')
+        visualize_objects(image_tensor, calib, objects, ax=ax_gt)
+        ax_gt.set_title('Ground truth')
+        save_path = os.path.join(train_dir, f'frame_{idx:04d}.png')
+        fig.savefig(save_path, bbox_inches='tight')
+        print(f'Saved {save_path}')
+        ax_det.clear()
+        ax_gt.clear()
     plt.close(fig)
-
 
 if __name__ == '__main__':
     main()
