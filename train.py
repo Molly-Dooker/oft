@@ -153,7 +153,7 @@ def parse_args():
                         help='warmup epochs')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum for SGD')
-    parser.add_argument('--weight-decay', type=float, default=1e-4,
+    parser.add_argument('-wd', '--weight-decay', type=float, default=1e-4,
                         help='weight decay')
     parser.add_argument('--lr-decay', type=float, default=0.99,
                         help='factor to decay learning rate by every epoch')
@@ -168,6 +168,8 @@ def parse_args():
                         help='mini-batch size for training')
     parser.add_argument('-ls', '--lr-scheduler', choices=['cs', 'cswr'], default='cs',
                         help='cs:CosineAnnealing, cswr:CosineAnnealingWarmRestarts')
+    parser.add_argument('--cyclestep', type=int, default=100,
+                        help='cswr cycle step')
     # Experiment options
     parser.add_argument('name', type=str, default='test',
                         help='name of experiment')
@@ -223,13 +225,12 @@ def main(args):
     # optimizer = optim.SGD(model.parameters(), args.lr, args.momentum, args.weight_decay)
     # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, args.lr_decay)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-
     if args.lr_scheduler=='cs':
         main_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - args.warm, eta_min=0)
         warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=args.warm)
         scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[args.warm])
     elif args.lr_scheduler=='cswr':
-        scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=50, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-9, warmup_steps=args.warm, gamma=0.5)    
+        scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=args.cyclestep, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-9, warmup_steps=args.warm, gamma=0.5)
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, val_loader, scheduler
     )
