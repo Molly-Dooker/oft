@@ -9,4 +9,5 @@ loguru==0.7.3
 ipdb==0.13.13
 jupyter==1.1.1
 nuscenes-devkit==1.1.11
+pandas==2.3.1
 numpy==1.26.4
