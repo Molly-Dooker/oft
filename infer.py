@@ -57,7 +57,7 @@ def main():
     model.load_state_dict(ckpt['model'])
     model.eval()
     encoder = ObjectEncoder(nms_thresh=args.nms_thresh)
-    fig, (ax_det, ax_gt) = plt.subplots(nrows=2, figsize=(8, 12))
+    fig, (ax_det, ax_gt) = plt.subplots(nrows=2, figsize=(8, 6))
     for idx, image, calib, objects, grid in tqdm(valid_dataset, desc='Validation'):
         image_tensor = to_tensor(image)
         if args.gpu >= 0:
@@ -77,26 +77,26 @@ def main():
         print(f'Saved {save_path}')
         ax_det.clear()
         ax_gt.clear()
-    train_dataset = KittiObjectDataset(args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
-    for idx, image, calib, objects, grid in tqdm(train_dataset, desc='Train'):
-        image_tensor = to_tensor(image)
-        if args.gpu >= 0:
-            image_tensor = image_tensor.cuda()
-            calib = calib.cuda()
-            grid = grid.cuda()
-        with torch.no_grad():
-            pred_encoded = model(image_tensor[None], calib[None], grid[None])
-        pred_encoded = [t[0].cpu() for t in pred_encoded]
-        detections = encoder.decode(*pred_encoded, grid.cpu())
-        visualize_objects(image_tensor, calib, detections, ax=ax_det)
-        ax_det.set_title('Detections')
-        visualize_objects(image_tensor, calib, objects, ax=ax_gt)
-        ax_gt.set_title('Ground truth')
-        save_path = os.path.join(train_dir, f'frame_{idx:04d}.png')
-        fig.savefig(save_path, bbox_inches='tight')
-        print(f'Saved {save_path}')
-        ax_det.clear()
-        ax_gt.clear()
+    # train_dataset = KittiObjectDataset(args.root, 'train', args.grid_size, args.grid_res, args.yoffset)
+    # for idx, image, calib, objects, grid in tqdm(train_dataset, desc='Train'):
+    #     image_tensor = to_tensor(image)
+    #     if args.gpu >= 0:
+    #         image_tensor = image_tensor.cuda()
+    #         calib = calib.cuda()
+    #         grid = grid.cuda()
+    #     with torch.no_grad():
+    #         pred_encoded = model(image_tensor[None], calib[None], grid[None])
+    #     pred_encoded = [t[0].cpu() for t in pred_encoded]
+    #     detections = encoder.decode(*pred_encoded, grid.cpu())
+    #     visualize_objects(image_tensor, calib, detections, ax=ax_det)
+    #     ax_det.set_title('Detections')
+    #     visualize_objects(image_tensor, calib, objects, ax=ax_gt)
+    #     ax_gt.set_title('Ground truth')
+    #     save_path = os.path.join(train_dir, f'frame_{idx:04d}.png')
+    #     fig.savefig(save_path, bbox_inches='tight')
+    #     print(f'Saved {save_path}')
+    #     ax_det.clear()
+    #     ax_gt.clear()
     plt.close(fig)
 
 if __name__ == '__main__':
