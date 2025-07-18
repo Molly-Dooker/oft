@@ -232,42 +232,29 @@ def main(args):
     elif args.lr_scheduler=='cswr':
         scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=args.cyclestep, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-9, warmup_steps=args.warm, gamma=0.5)
 
-    import matplotlib.pyplot as plt    
-    lr_history = []
-    for epoch in range(args.epochs):
-        # 매 에포크마다 스케줄러를 업데이트합니다.
-        scheduler.step()
-        # 현재 학습률을 가져와 리스트에 추가합니다.
-        current_lr = optimizer.param_groups[0]['lr']
-        lr_history.append(current_lr)
-    
-    # --- 그래프 그리기 및 저장 ---
-    plt.figure(figsize=(12, 6))
-    plt.plot(range(1, args.epochs + 1), lr_history)
-    plt.title('Learning Rate Schedule')
-    plt.xlabel('Epoch')
-    plt.ylabel('Learning Rate')
-    plt.grid(True)
-
-    # 이미지를 'lr_schedule.png' 파일로 저장
-    plt.savefig('lr_schedule.png')
-    print("Learning rate schedule plot saved to 'lr_schedule.png'")
-
-    # 메모리 해제를 위해 창 닫기
-    plt.close()
-    ipdb.set_trace()
-
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, val_loader, scheduler
     )
+
+    if accelerator.is_main_process:
+        lr_history = []
+    
     for epoch in range(1, args.epochs+1):
         if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')
-        train(args, train_loader, model, encoder, optimizer, epoch)
-        if epoch % args.val_interval == 0:
-            optimizer.zero_grad()
-            if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
-            validate(args, val_loader, model, encoder, epoch)
+        # train(args, train_loader, model, encoder, optimizer, epoch)
+        # if epoch % args.val_interval == 0:
+        #     optimizer.zero_grad()
+        #     if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
+        #     validate(args, val_loader, model, encoder, epoch)
+        if accelerator.is_main_process:
+            current_lr = optimizer.param_groups[0]['lr']
+            lr_history.append(current_lr)
         scheduler.step()
+    if accelerator.is_main_process:
+        import pandas as pd
+        df = pd.DataFrame(lr_history, columns=['lr'])
+        df.to_csv('real_lr_schedule.csv')
+
 if __name__ == '__main__':
     args = parse_args()
     logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
