@@ -184,8 +184,7 @@ def parse_args():
                         help='print loss summary every N iterations')
     return parser.parse_args()
 
-def save_checkpoint(args, epoch, model, optimizer, scheduler):    
-    # accelerator를 통해 DDP/DataParallel 래핑을 해제하고 원본 모델을 가져옵니다.
+def save_checkpoint(args, epoch, model, optimizer, scheduler):
     unwrapped_model = accelerator.unwrap_model(model)    
     ckpt = {
         'epoch' : epoch,
@@ -234,39 +233,15 @@ def main(args):
         args.warm      = args.warm*accelerator.num_processes
         scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=args.cyclestep, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-9, warmup_steps=args.warm, gamma=0.5)
 
-    model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
-        model, optimizer, train_loader, val_loader, scheduler
-    )
-
-    if accelerator.is_main_process:
-        lr_history = []
-    
+    model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, val_loader, scheduler)
     for epoch in range(1, args.epochs+1):
         if accelerator.is_main_process: logger.info(f'=== epoch {epoch} of {args.epochs} ===')
-        # train(args, train_loader, model, encoder, optimizer, epoch)
-        # if epoch % args.val_interval == 0:
-        #     optimizer.zero_grad()
-        #     if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
-        #     validate(args, val_loader, model, encoder, epoch)
-        if accelerator.is_main_process:
-            current_lr = optimizer.param_groups[0]['lr']
-            lr_history.append(current_lr)
+        train(args, train_loader, model, encoder, optimizer, epoch)
+        if epoch % args.val_interval == 0:
+            optimizer.zero_grad()
+            if accelerator.is_main_process: save_checkpoint(args, epoch, model, optimizer, scheduler)
+            validate(args, val_loader, model, encoder, epoch)
         scheduler.step()
-    if accelerator.is_main_process:
-        import pandas as pd
-        import matplotlib.pyplot as plt
-        df = pd.DataFrame(lr_history, columns=['lr'])
-        df.to_csv('real_lr_schedule.csv')
-        
-        plt.figure(figsize=(12, 6))
-        plt.plot(range(1, args.epochs + 1), lr_history)
-        plt.title('Learning Rate Schedule')
-        plt.xlabel('Epoch')
-        plt.ylabel('Learning Rate')
-        plt.grid(True)
-        # 이미지를 'lr_schedule.png' 파일로 저장
-        plt.savefig('lr_schedule.png')
-
 if __name__ == '__main__':
     args = parse_args()
     logger = logger_setup(prefix=args.name, logpath=os.path.join(args.savedir,args.name))
