@@ -231,7 +231,7 @@ def main(args):
     elif args.lr_scheduler=='cswr':
         args.cyclestep = args.cyclestep*accelerator.num_processes
         args.warm      = args.warm*accelerator.num_processes
-        scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=args.cyclestep, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-9, warmup_steps=args.warm, gamma=0.5)
+        scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=args.cyclestep, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-12, warmup_steps=args.warm, gamma=0.5)
 
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(model, optimizer, train_loader, val_loader, scheduler)
     for epoch in range(1, args.epochs+1):
