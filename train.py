@@ -149,7 +149,7 @@ def parse_args():
     # Optimization options
     parser.add_argument('-l', '--lr', type=float, default=1e-5,
                         help='learning rate')
-    parser.add_argument('--warm', type=int, default=5,
+    parser.add_argument('--warm', type=int, default=10,
                         help='warmup epochs')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum for SGD')
@@ -230,6 +230,8 @@ def main(args):
         warmup_scheduler = optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, total_iters=args.warm)
         scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[args.warm])
     elif args.lr_scheduler=='cswr':
+        args.cyclestep = args.cyclestep*accelerator.num_processes
+        args.warm      = args.warm*accelerator.num_processes
         scheduler = CosineAnnealingWarmupRestarts(optimizer, first_cycle_steps=args.cyclestep, cycle_mult=1.0, max_lr=args.lr, min_lr=1e-9, warmup_steps=args.warm, gamma=0.5)
 
     model, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
@@ -252,8 +254,18 @@ def main(args):
         scheduler.step()
     if accelerator.is_main_process:
         import pandas as pd
+        import matplotlib.pyplot as plt
         df = pd.DataFrame(lr_history, columns=['lr'])
         df.to_csv('real_lr_schedule.csv')
+        
+        plt.figure(figsize=(12, 6))
+        plt.plot(range(1, args.epochs + 1), lr_history)
+        plt.title('Learning Rate Schedule')
+        plt.xlabel('Epoch')
+        plt.ylabel('Learning Rate')
+        plt.grid(True)
+        # 이미지를 'lr_schedule.png' 파일로 저장
+        plt.savefig('lr_schedule.png')
 
 if __name__ == '__main__':
     args = parse_args()
